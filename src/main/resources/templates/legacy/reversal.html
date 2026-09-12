@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Legacy Banking — reversal</title>
+<link rel="stylesheet" href="/legacy.css"></head>
+<body><header>Legacy Credit Union Servicing Console <p>Synthetic demonstration data only</p></header>
+<main>
+<h1>Prepare Fee Reversal</h1><p>Account: <span th:text="${accountId}"></span></p><p>Current balance: $<span th:text="${balance}"></span></p>
+<div th:if="${error}" role="alert"><strong>VALIDATION_REJECTED</strong><p th:text="${error}"></p></div>
+<form method="post" th:action="@{/legacy/accounts/{id}/fee-reversal/review(id=${accountId})}">
+<p><label for="amount">Amount</label> <input id="amount" name="amount" inputmode="decimal" th:value="${amount}" required></p>
+<p><label for="reason">Reason</label> <input id="reason" name="reason" th:value="${reason}" maxlength="120" required></p>
+<button type="submit">Review reversal</button></form>
+</main></body></html>
+

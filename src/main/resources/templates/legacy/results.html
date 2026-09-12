@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Legacy Banking — results</title>
+<link rel="stylesheet" href="/legacy.css"></head>
+<body><header>Legacy Credit Union Servicing Console <p>Synthetic demonstration data only</p></header>
+<main>
+<h1>Search Results</h1>
+<table th:if="${found}"><thead><tr><th>Member ID</th><th>Name</th><th>Action</th></tr></thead>
+<tbody><tr><td th:text="${memberId}"></td><td th:text="${memberName}"></td><td><a th:href="@{/legacy/members/{id}(id=${memberId})}">Open</a></td></tr></tbody></table>
+<div th:unless="${found}" role="status"><h2>Member not found</h2><p>MEMBER_NOT_FOUND</p><p>No member matches that ID.</p></div>
+<p><a href="/legacy">New search</a></p>
+</main></body></html>
+

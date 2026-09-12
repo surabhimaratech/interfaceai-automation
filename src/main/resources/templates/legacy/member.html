@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Legacy Banking — member</title>
+<link rel="stylesheet" href="/legacy.css"></head>
+<body><header>Legacy Credit Union Servicing Console <p>Synthetic demonstration data only</p></header>
+<main>
+<h1>Member Details</h1><p>Member ID: <span th:text="${memberId}"></span></p><p>Name: <span th:text="${memberName}"></span></p>
+<h2>Accounts</h2><table><thead><tr><th>Account</th><th>Type</th><th>Action</th></tr></thead><tbody>
+<tr><td th:text="${accountId}"></td><td>Savings</td><td><a th:href="@{/legacy/accounts/{id}(id=${accountId})}">Open</a></td></tr>
+</tbody></table><h2>Member record</h2><table><tr><th>Record</th><th>Action</th></tr><tr><td>Member profile</td><td><a th:href="@{/legacy/members/{id}(id=${memberId})}">Open</a></td></tr></table>
+<p><a href="/legacy">New search</a></p>
+</main></body></html>
+

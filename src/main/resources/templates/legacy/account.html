@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Legacy Banking — account</title>
+<link rel="stylesheet" href="/legacy.css"></head>
+<body><header>Legacy Credit Union Servicing Console <p>Synthetic demonstration data only</p></header>
+<main>
+<h1>Savings Account</h1>
+<table><caption>Account Summary</caption><tr><th>Account</th><td th:text="${accountId}"></td></tr>
+<tr><th>Member</th><td><table><tr><th>Member ID</th><td th:text="${memberId}"></td></tr><tr><th>Name</th><td th:text="${memberName}"></td></tr></table></td></tr>
+<tr><th>Current balance</th><td th:text="|$${balance}|"></td></tr></table>
+<p><a th:href="@{/legacy/accounts/{id}/fee-reversal(id=${accountId})}">Prepare fee reversal</a></p>
+<p><a th:href="@{/legacy/members/{id}(id=${memberId})}">Back to member</a></p>
+</main></body></html>
+

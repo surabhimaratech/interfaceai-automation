@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Legacy Banking — review</title>
+<link rel="stylesheet" href="/legacy.css"></head>
+<body><header>Legacy Credit Union Servicing Console <p>Synthetic demonstration data only</p></header>
+<main>
+<h1>Fee Reversal Review</h1><p role="status">Ready for review — not submitted.</p>
+<table><tr><th>Member ID</th><td th:text="${memberId}"></td></tr><tr><th>Name</th><td th:text="${memberName}"></td></tr>
+<tr><th>Account</th><td th:text="${accountId}"></td></tr><tr><th>Current balance</th><td th:text="|$${balance}|"></td></tr>
+<tr><th>Reversal amount</th><td th:text="|$${amount}|"></td></tr><tr><th>Reason</th><td th:text="${reason}"></td></tr>
+<tr><th>Projected balance</th><td th:text="|$${projectedBalance}|"></td></tr></table>
+<p>Submission is an irreversible action and is blocked by the demo policy.</p>
+<form method="post" th:action="@{/legacy/accounts/{id}/fee-reversal/submit(id=${accountId})}"><button type="submit">Submit reversal</button></form>
+<p><a th:href="@{/legacy/accounts/{id}/fee-reversal(id=${accountId})}">Start a new review</a></p>
+</main></body></html>
+
