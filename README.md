@@ -51,7 +51,50 @@ test uses visible UI controls.
 
 ## Current scope
 
-This increment implements the target only. Discovery/model integration,
-capability artifacts, deterministic replay, runtime policy enforcement, human
-handoff, authentication and session expiry are not implemented yet. Browser tests
-are test evidence, not LLM discovery evidence. No API key is needed for this stage.
+The target and a one-action discovery proof are implemented. Capability artifacts,
+replay, a full discovery loop, human handoff, authentication and session expiry
+are not implemented yet. Offline browser/client tests are not live LLM evidence.
+
+## One live model action
+
+Set `OPENROUTER_API_KEY` in the shell used to start Gradle. Do not put it in source,
+command-line arguments or evidence. A `.env` file is not automatically loaded.
+The client pins `anthropic/claude-sonnet-5`; there is no fallback model.
+
+```sh
+./gradlew bootRun --args='--discovery.proof=true'
+```
+
+This starts the target, opens headed Chromium at `/legacy`, sends the current
+heading and visible control inventory to OpenRouter, and requests exactly one
+tool action toward filling the synthetic member ID. The response must contain
+one valid `ui_action` call referencing the current observation and control.
+The browser session checks policy, performs the action, and verifies a fill by
+reading the field value. It then closes Chromium; stop Spring Boot with Ctrl+C.
+This proves one action, not completion of the full banking goal.
+
+Every Playwright operation uses one dedicated thread. The same context/page
+persists across observations and actions until explicitly closed. Observation
+IDs invalidate old actions; control handles are transient and are not reusable
+artifact locators. Only the current main-frame controls are supported.
+
+Configuration in `application.properties` defines `discovery.allowed-origin`,
+`discovery.allowed-routes` (comma-separated full-match regexes), and
+`discovery.allowed-actions`. Unknown actions and click destinations fail closed.
+Submit routes remain prohibited even if a broad route pattern is configured.
+The browser also blocks out-of-policy requests, popups and service workers;
+unexpected dialogs stop actions. This is scoped to the trusted local synthetic
+target, not a security sandbox for arbitrary hostile websites.
+
+The proof writes a unique `evidence/action-<uuid>.jsonl`. Override with
+`--discovery.evidence=evidence/my-proof.jsonl`; existing files are never overwritten.
+Events include timestamps, run ID, state, fixed action/result codes and the pinned
+model. Field values, page content, URLs, prompts, keys, raw responses and exception
+bodies are omitted. Visible labels/headings and the goal are sent to the provider
+in memory; use synthetic data only. No screenshots or raw transcripts are saved.
+`liveModel=true` is emitted only after a valid response from the live client;
+`VALUE_VERIFIED` confirms the browser checked the resulting field value.
+
+Provider authentication/availability errors are surfaced as sanitized error codes.
+Requests have a 45-second timeout, no redirects and no automatic retries. Normal
+`./gradlew test` uses a local HTTP stub for model protocol tests and requires no key.
