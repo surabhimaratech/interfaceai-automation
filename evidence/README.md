@@ -23,3 +23,34 @@ local `.env` file without printing it. The temporary server was stopped afterwar
 This proves one live model-generated action only. It does not establish a complete
 discovery workflow, a capability artifact, or deterministic replay. Offline tests
 are separate from this live evidence.
+
+## Bounded-flow attempts (2026-09-12 Pacific / 2026-09-13 UTC)
+
+- `flow-0fb44a86-ca7d-4255-9116-32dc9895a9c1.jsonl`: five live model-selected
+  actions succeeded; decision six stopped with MODEL_FAILURE. This run predates
+  the finer-grained provider HTTP error codes, so its exact provider status was
+  not retained. It is not a completed review flow.
+- `flow-14a3b2d3-3e58-4b5b-b9e0-b0d4b3898f4a.jsonl`: retry stopped on its first
+  model request with MODEL_HTTP_402 (payment required). No UI action was executed
+  in this retry. The local server was stopped afterward.
+
+Both used the pinned model and the live `/legacy` UI. Neither is represented as a
+successful full discovery run. They remain unchanged as authentic failure evidence.
+
+## Verified bounded discovery success
+
+After credits were restored, `flow-c4c642f3-a5eb-4a37-9bfb-e56cceec7910.jsonl`
+records a new live run on 2026-09-12 Pacific (2026-09-13 UTC), using
+`anthropic/claude-sonnet-5`. It ended with SUCCEEDED / CHECKPOINT_VERIFIED after
+16 model decisions, within the 20-decision / 120-second bounds. The checkpoint
+re-read the visible review table and verified the requested inputs, not-submitted
+status and balance arithmetic. No submission occurred.
+
+A temporary local Java harness invoked the existing DiscoveryFlow, retrieved
+its typed in-memory result from the Spring context, displayed that synthetic
+result to the operator, and closed the application. It did not script UI actions
+or replace any model decision. Review values were not persisted in JSONL.
+The ordinary `--discovery.flow=true` command runs the same discovery code.
+
+All 22 tests passed in a fresh `./gradlew test --rerun-tasks` run. The success log
+is discovery evidence only; no reusable artifact or deterministic replay exists.

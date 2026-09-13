@@ -18,11 +18,20 @@ public final class SafeEvents {
     }
     public synchronized void record(RunState state, UiAction.Type action, ActionResult.Code code,
                                     String model, boolean liveModel) throws IOException {
+        write(state, action, code, model, liveModel, null);
+    }
+    public synchronized void recordStep(RunState state, UiAction.Type action, ActionResult.Code code,
+                                        boolean liveModel, int step) throws IOException {
+        write(state, action, code, OpenRouterClient.MODEL, liveModel, step);
+    }
+    private void write(RunState state, UiAction.Type action, ActionResult.Code code,
+                       String model, boolean liveModel, Integer step) throws IOException {
         Map<String,Object> event = new LinkedHashMap<>();
         event.put("timestamp", Instant.now().toString());
         event.put("runId", runId);
         event.put("state", state.name());
         event.put("liveModel", liveModel);
+        if (step != null) event.put("step", step);
         if (action != null) event.put("action", action.name());
         if (code != null) event.put("code", code.name());
         if (model != null) event.put("model", OpenRouterClient.MODEL);

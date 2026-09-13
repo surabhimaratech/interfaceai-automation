@@ -51,8 +51,8 @@ test uses visible UI controls.
 
 ## Current scope
 
-The target and a one-action discovery proof are implemented. Capability artifacts,
-replay, a full discovery loop, human handoff, authentication and session expiry
+The target, one-action proof, and bounded discovery loop are implemented.
+Capability artifacts, replay, human takeover, authentication and session expiry
 are not implemented yet. Offline browser/client tests are not live LLM evidence.
 
 ## One live model action
@@ -98,3 +98,53 @@ in memory; use synthetic data only. No screenshots or raw transcripts are saved.
 Provider authentication/availability errors are surfaced as sanitized error codes.
 Requests have a 45-second timeout, no redirects and no automatic retries. Normal
 `./gradlew test` uses a local HTTP stub for model protocol tests and requires no key.
+
+## Bounded discovery flow
+
+With `OPENROUTER_API_KEY` available in the process environment:
+
+```sh
+./gradlew bootRun --args='--discovery.flow=true'
+```
+
+The runner starts at member search and requests individual model decisions until
+the fee-reversal review checkpoint is verified or a stopping condition occurs.
+Defaults are member `100042`, account `SAV-2048`, amount `25.00`, and reason
+`Courtesy adjustment`. Override them with `discovery.member-id`,
+`discovery.account-id`, `discovery.amount`, and `discovery.reason`.
+Use `discovery.max-steps` (default 20, maximum 100) and
+`discovery.timeout-seconds` (default 120, maximum 600) to bound a run.
+Do not enable `discovery.proof` and `discovery.flow` together.
+
+Each decision counts toward the limit, including WAIT and COMPLETE. The deadline
+uses a monotonic clock from runner entry, covers observation/model/action work,
+and is rechecked before executing any returned action. HTTP and browser calls
+receive the remaining time budget. Browser construction precedes runner entry;
+browser cleanup has its own bounded allowance. A late response cannot trigger
+another action. WAIT pauses for at most 250 ms and obtains a fresh observation.
+
+Observations contain at most 40 controls, names up to 160 characters, nearby
+row/form/fieldset context up to 300 characters, and up to five visible status and
+alert messages each (300 characters per message). Known token, email and SSN
+patterns and control characters are sanitized. Filled-state flags expose whether
+a field is populated, not its value. This is best-effort sanitization for the
+synthetic target, not general PII detection. Context is untrusted data in the
+model prompt. Context, page text and outputs are never copied into JSONL logs.
+
+COMPLETE causes another fresh UI observation. The target-specific checkpoint
+requires the review route/title, the not-submitted status, no alerts, exact
+member/account/reason/amount, and consistent current/projected balances. The
+runner returns `Result` with typed `ReviewCheckpoint.Details` only on verified
+success. `DiscoveryFlow.result()` retains this result in memory; stdout prints
+only state/code/step count. This increment does not expose a result API or persist
+financial details.
+
+Known not-found and validation messages return BUSINESS_OUTCOME without another
+model call. REQUEST_HUMAN or an unknown alert returns HUMAN_REQUIRED. This is a
+stop signal only: the CLI closes its browser on termination, and actual operator
+takeover/resume is intentionally not implemented in this slice. Invalid/stale
+decisions, step limits, deadline expiry and provider errors terminate explicitly.
+
+Flow evidence uses unique `evidence/flow-<uuid>.jsonl` files with state transitions,
+step counts and fixed result codes. Previous evidence is preserved. No reusable
+artifact or replay engine is created.

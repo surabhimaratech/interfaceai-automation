@@ -1,0 +1,4 @@
+{"timestamp":"2026-09-13T00:04:22.038124Z","runId":"cfb3dba6-3c8c-4763-9ea2-db13e8fbe8ef","state":"OBSERVING","liveModel":false,"step":0,"model":"anthropic/claude-sonnet-5"}
+{"timestamp":"2026-09-13T00:04:22.382059Z","runId":"cfb3dba6-3c8c-4763-9ea2-db13e8fbe8ef","state":"DECIDING","liveModel":false,"step":0,"model":"anthropic/claude-sonnet-5"}
+{"timestamp":"2026-09-13T00:04:22.768479Z","runId":"cfb3dba6-3c8c-4763-9ea2-db13e8fbe8ef","state":"FAILED","liveModel":false,"step":1,"code":"MODEL_HTTP_402","model":"anthropic/claude-sonnet-5"}
+{"timestamp":"2026-09-13T00:04:22.855468Z","runId":"cfb3dba6-3c8c-4763-9ea2-db13e8fbe8ef","state":"CLOSED","liveModel":false}
