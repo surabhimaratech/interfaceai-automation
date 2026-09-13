@@ -107,4 +107,52 @@ class DiscoveryRunnerTest {
         assertEquals(300, cleaned.length());
         assertFalse(cleaned.contains("private-value")); assertFalse(cleaned.contains("person@")); assertFalse(cleaned.contains("123-45"));
     }
+    @Test void passesPreviousSummaryAndStopsRepeatedActions() throws Exception {
+        Surface s = new Surface(new Observation(UUID.randomUUID(), "/legacy", "Search", List.of(new Observation.Control("c0", "textbox", "Member ID"))));
+        java.util.List<PreviousAction> summaries = new java.util.ArrayList<>();
+        DecisionClient client = new DecisionClient() {
+            public UiAction decide(String g, Observation o, Duration t) { throw new AssertionError(); }
+            public UiAction decide(String g, Observation o, Duration t, PreviousAction p) {
+                summaries.add(p); return new UiAction(o.id(), UiAction.Type.FILL, "c0", "100042");
+            }
+        };
+        var result = runner(s, client, 10, new AtomicLong()).run("/legacy", REQUEST);
+        assertEquals(ActionResult.Code.NO_PROGRESS, result.code()); assertEquals(2, s.actions);
+        assertNull(summaries.getFirst());
+        assertEquals(new PreviousAction(UiAction.Type.FILL, ActionResult.Code.VALUE_VERIFIED, false), summaries.get(1));
+    }
+    @Test void modelHumanRequestResumesWithFreshObservationAndCompletes() throws Exception {
+        var h = new HandoffCoordinator();
+        Surface s = new Surface(new Observation(UUID.randomUUID(), "/legacy", "Search", List.of())) {
+            public void giveToHuman(HandoffCoordinator.Reason reason, int step) {
+                try { h.request(reason, step); } catch (Exception e) { throw new RuntimeException(e); }
+            }
+            public void pumpHumanEvents() {
+                assertEquals(HandoffCoordinator.Owner.HUMAN, h.status().owner());
+                next = review("$25.00"); h.interaction();
+                try { h.resume(h.resumeToken()); } catch (Exception e) { throw new RuntimeException(e); }
+            }
+            public void reclaimFromHuman() {
+                try { h.reclaim(); } catch (Exception e) { throw new RuntimeException(e); }
+            }
+        };
+        var result = runner(s, (g,o,t) -> {
+            h.requireAutomation();
+            return decision(o, o.heading().equals("Search") ? UiAction.Type.REQUEST_HUMAN : UiAction.Type.COMPLETE);
+        }, 5, new AtomicLong()).handoff(h, Duration.ofSeconds(1), false, 3).run("/legacy", REQUEST);
+        assertEquals(RunState.SUCCEEDED, result.state()); assertEquals(2, result.steps());
+        assertEquals(HandoffCoordinator.Owner.AUTOMATION, h.status().owner()); assertEquals(0, s.actions);
+    }
+    @Test void humanWaitIsBoundedWithoutFurtherModelCalls() throws Exception {
+        var h = new HandoffCoordinator(); var clock = new AtomicLong();
+        Surface s = new Surface(new Observation(UUID.randomUUID(), "/legacy", "Search", List.of())) {
+            public void giveToHuman(HandoffCoordinator.Reason reason, int step) {
+                try { h.request(reason, step); } catch (Exception e) { throw new RuntimeException(e); }
+            }
+            public void pumpHumanEvents() { clock.addAndGet(Duration.ofMillis(200).toNanos()); }
+        };
+        var result = runner(s, (g,o,t) -> decision(o, UiAction.Type.REQUEST_HUMAN), 5, clock)
+            .handoff(h, Duration.ofMillis(100), false, 3).run("/legacy", REQUEST);
+        assertEquals(ActionResult.Code.HANDOFF_TIMEOUT, result.code()); assertEquals(1, result.steps());
+    }
 }

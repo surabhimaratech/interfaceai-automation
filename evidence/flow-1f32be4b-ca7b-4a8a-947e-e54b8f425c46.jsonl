@@ -1,0 +1,6 @@
+{"timestamp":"2026-09-13T08:24:20.443035Z","runId":"3b454f8f-b91a-479c-9793-58f290e2102f","state":"OBSERVING","liveModel":false,"step":0,"model":"anthropic/claude-sonnet-5"}
+{"timestamp":"2026-09-13T08:24:20.820979Z","runId":"3b454f8f-b91a-479c-9793-58f290e2102f","state":"PAUSED","liveModel":false,"step":0,"code":"HUMAN_REQUESTED","model":"anthropic/claude-sonnet-5"}
+{"timestamp":"2026-09-13T08:24:20.821570Z","runId":"3b454f8f-b91a-479c-9793-58f290e2102f","event":"CONTROL_TRANSFER","from":"AUTOMATION","to":"HUMAN","reason":"SIMULATED_SESSION_EXPIRY","step":0,"epoch":1,"manualInputEvents":0}
+{"timestamp":"2026-09-13T08:29:20.871148Z","runId":"3b454f8f-b91a-479c-9793-58f290e2102f","state":"TIMED_OUT","liveModel":false,"step":0,"code":"HANDOFF_TIMEOUT","model":"anthropic/claude-sonnet-5"}
+{"timestamp":"2026-09-13T08:29:20.984256Z","runId":"3b454f8f-b91a-479c-9793-58f290e2102f","event":"CONTROL_TRANSFER","from":"HUMAN","to":"CLOSED","reason":"SIMULATED_SESSION_EXPIRY","step":0,"epoch":1,"manualInputEvents":0}
+{"timestamp":"2026-09-13T08:29:20.984503Z","runId":"3b454f8f-b91a-479c-9793-58f290e2102f","state":"CLOSED","liveModel":false}

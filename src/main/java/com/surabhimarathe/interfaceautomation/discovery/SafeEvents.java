@@ -24,6 +24,15 @@ public final class SafeEvents {
                                         boolean liveModel, int step) throws IOException {
         write(state, action, code, OpenRouterClient.MODEL, liveModel, step);
     }
+    public synchronized void control(HandoffCoordinator.Owner from, HandoffCoordinator.Owner to,
+                                     HandoffCoordinator.Reason reason, int step, long epoch, int interactions) throws IOException {
+        Map<String,Object> event = new LinkedHashMap<>();
+        event.put("timestamp", Instant.now().toString()); event.put("runId", runId);
+        event.put("event", "CONTROL_TRANSFER"); event.put("from", from.name()); event.put("to", to.name());
+        if (reason != null) event.put("reason", reason.name());
+        event.put("step", step); event.put("epoch", epoch); event.put("manualInputEvents", interactions);
+        Files.writeString(file, json.writeValueAsString(event) + System.lineSeparator(), StandardOpenOption.APPEND);
+    }
     private void write(RunState state, UiAction.Type action, ActionResult.Code code,
                        String model, boolean liveModel, Integer step) throws IOException {
         Map<String,Object> event = new LinkedHashMap<>();

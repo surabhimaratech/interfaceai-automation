@@ -8,4 +8,9 @@ public interface DiscoverySurface {
     ActionResult execute(UiAction action);
     void budget(Duration remaining);
     void waitBriefly();
+    default void attachHandoff(HandoffCoordinator coordinator) { }
+    default void simulateExpiry() { throw new UnsupportedOperationException(); }
+    default void giveToHuman(HandoffCoordinator.Reason reason, int step) { throw new UnsupportedOperationException(); }
+    default void pumpHumanEvents() { throw new UnsupportedOperationException(); }
+    default void reclaimFromHuman() { throw new UnsupportedOperationException(); }
 }

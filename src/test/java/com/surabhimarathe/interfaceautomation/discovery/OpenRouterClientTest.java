@@ -30,11 +30,13 @@ class OpenRouterClientTest {
         server.start();
         try {
             var client = new OpenRouterClient("test-key", URI.create("http://localhost:" + server.getAddress().getPort()));
-            assertEquals(action, client.decide("Enter the member ID", observation));
+            assertEquals(action, client.decide("Enter the member ID", observation, java.time.Duration.ofSeconds(5),
+                new PreviousAction(UiAction.Type.CLICK, ActionResult.Code.CLICK_COMPLETED, true)));
             var body = json.readTree(request.get());
             assertEquals("anthropic/claude-sonnet-5", body.path("model").asString());
             assertFalse(body.path("parallel_tool_calls").asBoolean());
             assertFalse(request.get().contains("test-key"));
+            assertTrue(body.path("messages").path(1).path("content").asString().contains("CLICK_COMPLETED"));
         } finally { server.stop(0); }
     }
     @Test void rejectsMissingKeyAndMalformedOrProviderErrorWithoutLeakingBody() throws Exception {

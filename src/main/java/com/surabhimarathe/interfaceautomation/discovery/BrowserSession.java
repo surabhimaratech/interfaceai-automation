@@ -17,21 +17,75 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
     private final Map<String, ElementHandle> handles = new HashMap<>();
     private boolean unexpectedDialog;
     private volatile long operationMillis = 5000;
+    private HandoffCoordinator handoff;
+
+    @Override public void attachHandoff(HandoffCoordinator coordinator) {
+        call(() -> {
+            handoff = coordinator;
+            context.exposeBinding("__manualInput", (source, args) -> { handoff.interaction(); return null; });
+            String script = """
+                (() => {
+                  if (window.__manualCapture) return;
+                  window.__manualCapture = true;
+                  for (const kind of ['click', 'input']) document.addEventListener(kind, event => {
+                    if (event.isTrusted) window.__manualInput().catch(() => {});
+                  }, true);
+                })();
+                """;
+            context.addInitScript(script);
+            page.evaluate(script);
+            return null;
+        });
+    }
+    @Override public void simulateExpiry() {
+        call(() -> {
+            requireAutomation();
+            page.evaluate("""
+                () => {
+                  const overlay = document.createElement('section');
+                  overlay.setAttribute('role', 'alert');
+                  overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;background:#fff;padding:60px';
+                  const title = document.createElement('h2'); title.textContent = 'Simulated session expired';
+                  const text = document.createElement('p'); text.textContent = 'SESSION_EXPIRED — Restore this synthetic session to continue.';
+                  const button = document.createElement('button'); button.textContent = 'Restore session';
+                  button.onclick = () => overlay.remove();
+                  overlay.append(title,text,button); document.body.append(overlay);
+                }
+                """);
+            latest = null;
+            return null;
+        });
+    }
+    @Override public void giveToHuman(HandoffCoordinator.Reason reason, int step) {
+        call(() -> { requireAutomation(); latest = null; handoff.request(reason, step); return null; });
+    }
+    @Override public void pumpHumanEvents() {
+        // Dispatch browser input callbacks without navigating, reading fields or issuing actions.
+        call(() -> { page.waitForTimeout(50); return null; });
+    }
+    @Override public void reclaimFromHuman() {
+        call(() -> { latest = null; unexpectedDialog = false; handoff.reclaim(); return null; });
+    }
+    private void requireAutomation() { if (handoff != null) handoff.requireAutomation(); }
 
     @Override public void budget(java.time.Duration remaining) {
         operationMillis = Math.max(1, Math.min(5000, remaining.toMillis()));
     }
     @Override public void waitBriefly() {
-        call(() -> { page.waitForTimeout(Math.min(250, operationMillis)); return null; });
+        call(() -> { requireAutomation(); page.waitForTimeout(Math.min(250, operationMillis)); return null; });
     }
 
     public BrowserSession(ActionPolicy policy) { this(policy, false); }
     BrowserSession(ActionPolicy policy, boolean headless) {
+        this(policy, headless, List.of());
+    }
+    // Local CDP port is used only by integration tests to drive the existing page as a test operator.
+    BrowserSession(ActionPolicy policy, boolean headless, List<String> launchArgs) {
         this.policy = policy;
         try { call(() -> {
             try {
                 playwright = Playwright.create();
-                browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(headless));
+                browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(headless).setArgs(launchArgs));
                 context = browser.newContext(new Browser.NewContextOptions().setServiceWorkers(ServiceWorkerPolicy.BLOCK));
                 context.route("**/*", route -> {
                     String url = route.request().url();
@@ -53,6 +107,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
 
     public Observation open(String url) {
         return call(() -> {
+            requireAutomation();
             if (!policy.allowsUrl(url)) throw new IllegalArgumentException("ENTRY_POLICY_DENIED");
             page.navigate(url);
             return observeInternal();
@@ -61,6 +116,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
     public Observation observe() { return call(this::observeInternal); }
     public ActionResult execute(UiAction action) {
         return call(() -> {
+            requireAutomation();
             if (action.type() != UiAction.Type.FILL && action.type() != UiAction.Type.CLICK)
                 return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
             if (latest == null || !latest.id().equals(action.observationId()))
@@ -105,6 +161,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
         return new ActionResult(status, code, null);
     }
     private Observation observeInternal() {
+        requireAutomation();
         if (!policy.allowsUrl(page.url())) throw new IllegalStateException("OBSERVATION_POLICY_DENIED");
         for (var h : handles.values()) h.dispose();
         handles.clear();

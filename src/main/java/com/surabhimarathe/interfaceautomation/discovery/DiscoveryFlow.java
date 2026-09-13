@@ -16,6 +16,8 @@ import java.util.regex.Pattern;
 public final class DiscoveryFlow implements ApplicationRunner {
     private final Environment env;
     private DiscoveryRunner.Result result;
+    private final HandoffCoordinator handoff = new HandoffCoordinator();
+    public HandoffCoordinator handoff() { return handoff; }
     public DiscoveryFlow(Environment env) { this.env = env; }
     public DiscoveryRunner.Result result() { return result; }
     @Override public void run(ApplicationArguments arguments) throws Exception {
@@ -29,14 +31,19 @@ public final class DiscoveryFlow implements ApplicationRunner {
             env.getProperty("discovery.account-id", "SAV-2048"), new BigDecimal(env.getProperty("discovery.amount", "25.00")),
             env.getProperty("discovery.reason", "Courtesy adjustment"));
         var events = new SafeEvents(Path.of(env.getProperty("discovery.evidence", "evidence/flow-" + UUID.randomUUID() + ".jsonl")));
+        handoff.attach(events);
         try (var session = new BrowserSession(policy)) {
             result = new DiscoveryRunner(session, client, events,
                 env.getProperty("discovery.max-steps", Integer.class, 20),
                 Duration.ofSeconds(env.getProperty("discovery.timeout-seconds", Long.class, 120L)))
+                .handoff(handoff, Duration.ofSeconds(env.getProperty("discovery.handoff-timeout-seconds", Long.class, 180L)),
+                    env.getProperty("discovery.simulate-expiry", Boolean.class, false),
+                    env.getProperty("discovery.progress-limit", Integer.class, 3))
                 .run(origin + "/legacy", request);
             // Typed review details are returned by the runner and retained in result(), never logged.
             System.out.println("Discovery result: " + result.state() + " / " + result.code() + " / steps=" + result.steps());
         } finally {
+            handoff.close();
             events.record(RunState.CLOSED, null, null, null, false);
         }
     }

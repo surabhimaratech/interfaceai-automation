@@ -52,8 +52,9 @@ test uses visible UI controls.
 ## Current scope
 
 The target, one-action proof, and bounded discovery loop are implemented.
-Capability artifacts, replay, human takeover, authentication and session expiry
-are not implemented yet. Offline browser/client tests are not live LLM evidence.
+Minimal same-session human takeover is also implemented. Capability artifacts,
+replay and real authentication are not implemented. Session expiry is an explicit
+UI simulation. Offline browser/client tests are not live LLM evidence.
 
 ## One live model action
 
@@ -140,11 +141,68 @@ only state/code/step count. This increment does not expose a result API or persi
 financial details.
 
 Known not-found and validation messages return BUSINESS_OUTCOME without another
-model call. REQUEST_HUMAN or an unknown alert returns HUMAN_REQUIRED. This is a
-stop signal only: the CLI closes its browser on termination, and actual operator
-takeover/resume is intentionally not implemented in this slice. Invalid/stale
+model call. REQUEST_HUMAN or an unknown alert pauses for the local operator when
+the flow's handoff coordinator is attached. A runner without that coordinator
+returns HUMAN_REQUIRED. Invalid/stale
 decisions, step limits, deadline expiry and provider errors terminate explicitly.
 
 Flow evidence uses unique `evidence/flow-<uuid>.jsonl` files with state transitions,
 step counts and fixed result codes. Previous evidence is preserved. No reusable
 artifact or replay engine is created.
+
+## Repetition guard and human handoff
+
+Each decision receives `PreviousAction`: action enum, fixed result code, and a
+state-changed boolean. It contains no values, labels, selectors, URLs or page
+text. Fresh observation IDs do not count as progress. The in-memory guard keeps
+at most 16 state/action fingerprints and pauses before the third identical
+state/action attempt, or after three actions without observed progress. Configure
+`discovery.progress-limit` from 2 to 10 (default 3). The guard resets after human
+resume, while the overall step/deadline limits remain in force.
+
+For a manual demonstration, load the ignored `.env` into the current shell and run:
+
+```sh
+set -a
+source .env
+set +a
+./gradlew bootRun --args='--discovery.flow=true --discovery.simulate-expiry=true --discovery.timeout-seconds=600 --discovery.handoff-timeout-seconds=300'
+```
+
+Only source your own trusted `.env` file. Open http://localhost:8080/operator in
+your ordinary browser. The existing headed Chromium page shows **Simulated
+session expired**. In that Chromium window click **Restore session**, enter the
+synthetic member ID `100042`, and click **Search**. In the operator page click
+**Resume automation**. The runner takes a fresh observation of Search Results
+and continues with the model through verified review. Never submit a reversal.
+
+Simulation adds a dismissible UI overlay; it does not implement real credentials
+or server-side session expiration. Normal runs omit `discovery.simulate-expiry`.
+Model REQUEST_HUMAN decisions and no-progress conditions use the same handoff.
+
+Ownership is `AUTOMATION -> HUMAN -> RESUMING -> AUTOMATION`. The browser owner
+thread drains prior work, invalidates the current observation, then grants human
+control. Automated open/observe/execute/wait operations reject HUMAN or RESUMING
+ownership. The pause loop only dispatches browser callbacks so manual navigation
+works. Resume uses a single-use token; stale or duplicate signals are rejected.
+After the owner thread reclaims control, the runner observes afresh and continues
+or verifies completion. It never reuses the pre-handoff action.
+
+The operator endpoints accept loopback requests only; state changes require POST
+and the current token, with same-origin checks. They remain outside automation's
+allowlist. This is a single local operator UI, not production authentication.
+Ownership is cooperative: it cannot physically stop a person using the browser
+after resuming automation. Navigation policy and the submit block remain active
+during human operation too.
+
+Each run allows at most three handoffs. Handoff timeout defaults to 180 seconds;
+the overall run deadline also includes human waiting. On timeout or completion the
+CLI closes the browser and records CLOSED. No model calls or automated UI actions
+occur during HUMAN ownership. Control-transfer events record only reason enum,
+step, epoch, ownership and aggregate manual input count; no human field values or
+page data are captured. The count is a local audit signal, not identity proof.
+
+`./gradlew test` includes state-machine, repetition, summary, stale-resume and
+same-page integration tests. The integration test uses a second CDP client as a
+**simulated** operator and pumps browser events like the real runner. It is not
+presented as a real human demonstration. CDP is enabled only in that test.
