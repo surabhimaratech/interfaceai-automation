@@ -17,7 +17,10 @@ public final class ArtifactValidator {
     public static final int MAX_DESCRIPTION = 1000;
     public static final int MAX_CONTRACT_DESCRIPTION = 500;
 
-    public void validate(CapabilityArtifact a) {
+    public void validate(CapabilityArtifact a) { validate(a, false); }
+    /** Trusted host declarations are validated separately and must contain no executable steps. */
+    public void validateDefinition(CapabilityArtifact a) { validate(a, true); }
+    private void validate(CapabilityArtifact a, boolean definition) {
         require(a != null, REQUIRED_FIELD, "$");
         require(a.schemaVersion() == SCHEMA_VERSION, UNSUPPORTED_SCHEMA_VERSION, "schemaVersion");
         require(a.artifactVersion() > 0, INVALID_ARTIFACT_VERSION, "artifactVersion");
@@ -46,7 +49,7 @@ public final class ArtifactValidator {
             metadata(e.getValue().description(), MAX_CONTRACT_DESCRIPTION, p + ".description");
             constraints(e.getValue().type(), e.getValue().constraints(), p);
         }
-        require(a.steps() != null && !a.steps().isEmpty() && a.steps().size() <= 100, REQUIRED_FIELD, "steps");
+        require(a.steps() != null && (definition ? a.steps().isEmpty() : !a.steps().isEmpty()) && a.steps().size() <= 100, REQUIRED_FIELD, "steps");
         var ids = new HashSet<String>();
         for (int i = 0; i < a.steps().size(); i++) {
             StepSpec s = a.steps().get(i);

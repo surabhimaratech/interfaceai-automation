@@ -7,7 +7,9 @@ import static com.surabhimarathe.interfaceautomation.discovery.ActionResult.Code
 
 /** Bounded decisions; the model chooses navigation, the host verifies completion. */
 public final class DiscoveryRunner {
-    public record Result(RunState state, ActionResult.Code code, int steps, ReviewCheckpoint.Details details) {}
+    public record Result(RunState state, ActionResult.Code code, int steps, ReviewCheckpoint.Details details, UUID runId) {
+        @Override public String toString() { return "DiscoveryResult[state=" + state + ", code=" + code + ", steps=" + steps + ", runId=" + runId + "]"; }
+    }
     private final DiscoverySurface surface;
     private final DecisionClient model;
     private final SafeEvents events;
@@ -45,6 +47,7 @@ public final class DiscoveryRunner {
     }
     public Result run(String entry, ReviewCheckpoint.Request request) throws java.io.IOException {
         if (state != RunState.CREATED) throw new IllegalStateException("RUN_ALREADY_STARTED");
+        surface.bindRun(events.runId(), events.hasCorrelatedFilename());
         started = clock.getAsLong();
         try {
             transition(RunState.OBSERVING, null, null, false);
@@ -114,10 +117,12 @@ public final class DiscoveryRunner {
                     }
                 }
             }
-        } catch (OpenRouterClient.ModelFailure e) {
+        } catch (DecisionFailure e) {
             ActionResult.Code code = MODEL_FAILURE;
             try { code = ActionResult.Code.valueOf(e.getMessage()); } catch (IllegalArgumentException ignored) { }
             return end(expired() ? RunState.TIMED_OUT : RunState.FAILED, expired() ? DEADLINE_EXCEEDED : code, null);
+        } catch (PolicyDeniedException e) {
+            return end(RunState.BLOCKED, POLICY_DENIED, null);
         } catch (RuntimeException e) {
             return end(expired() ? RunState.TIMED_OUT : RunState.FAILED, expired() ? DEADLINE_EXCEEDED : INVALID_MODEL_ACTION, null);
         }
@@ -148,7 +153,9 @@ public final class DiscoveryRunner {
     private Duration remaining() { return Duration.ofNanos(Math.max(1, timeout.toNanos() - (clock.getAsLong() - started))); }
     private Result end(RunState terminal, ActionResult.Code code, ReviewCheckpoint.Details details) throws java.io.IOException {
         transition(terminal, null, code, false);
-        return new Result(state, code, steps, details);
+        Result result = new Result(state, code, steps, details, events.runId());
+        surface.discoveryFinished(result);
+        return result;
     }
     private void transition(RunState next, UiAction.Type action, ActionResult.Code code, boolean live) throws java.io.IOException {
         boolean terminal = Set.of(RunState.SUCCEEDED, RunState.FAILED, RunState.BLOCKED, RunState.TIMED_OUT,

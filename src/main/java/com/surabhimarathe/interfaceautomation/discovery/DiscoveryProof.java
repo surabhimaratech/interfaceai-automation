@@ -19,8 +19,9 @@ public final class DiscoveryProof implements ApplicationRunner {
         var client = new OpenRouterClient(System.getenv("OPENROUTER_API_KEY"));
         String origin = env.getRequiredProperty("discovery.allowed-origin");
         var policy = DiscoveryPolicyConfiguration.from(env);
+        UUID runId = UUID.randomUUID();
         var events = new SafeEvents(Path.of(env.getProperty("discovery.evidence",
-            "evidence/action-" + UUID.randomUUID() + ".jsonl")));
+            "evidence/action-{runId}.jsonl").replace("{runId}", runId.toString())), runId);
         RunState state = RunState.CREATED;
         try (var session = new BrowserSession(policy)) {
             state = RunState.OBSERVING;

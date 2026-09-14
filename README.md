@@ -54,7 +54,8 @@ test uses visible UI controls.
 The target, one-action proof, and bounded discovery loop are implemented.
 Minimal same-session human takeover is also implemented. Day 2 includes the
 versioned artifact model and isolated compiler seam (gate 1), plus deterministic
-artifact replay (gate 2). Discovery-to-artifact compilation is not integrated.
+artifact replay (gate 2). Gate 3 connects successful browser execution to compilation
+behind an opt-in flag; only scripted offline integration has been tested so far.
 Real authentication is not implemented; session expiry is an explicit UI
 simulation. Offline browser/client/replay tests are not live LLM evidence.
 
@@ -284,10 +285,10 @@ the caller. Runtime IDs/observations are not retained. Fill values stay in memor
 the trace is not a persistence DTO and has redacted `toString` output.
 `ArtifactCompiler.compile(draft, trace, parameters)` consumes a draft with empty
 steps, propagates metadata, logical target, boundary and outcomes, produces ordered
-steps, and validates the complete artifact. The caller
-must supply descriptors tied to the executed observations; this isolated seam
-does not infer them from runtime IDs, integrate with the runner, or authenticate
-a trace. Provenance stores only a source enum and random trace UUID, not transcripts.
+steps, and validates the complete artifact. This lower-level seam accepts explicit
+descriptors but does not by itself authenticate them. Gate 3 below privately owns
+the trace and derives descriptors at the browser execution boundary. Provenance
+stores only a source enum and the shared run/trace UUID, not transcripts.
 
 Parameter binding uses exact whole-string equality. The sole canonicalization is
 plain-decimal numeric equality (`25.00` can bind a BigDecimal `25`); exponent,
@@ -410,3 +411,120 @@ include a successful run with model classes unavailable, both business branches,
 ambiguous/missing controls, postcondition/extraction/checkpoint failures, configured
 submit controls, intercepted script requests, deadline bounds, and pre-launch
 rejection. Existing committed discovery evidence is not rewritten or extended.
+
+## Day 2 gate 3: execution-derived compilation
+
+Compilation is optional and does not change the discovery policy or decision
+interface. Host code calls `BrowserSession.enableCompilation(definition,
+parameters, runId, outputDirectory)` **before opening the target**. The runner
+binds its run ID to that session, then notifies it after the terminal result.
+The model still supplies only ordinary `UiAction` decisions. It never supplies
+trusted artifact locators, postconditions, metadata or output paths.
+
+`FeeReviewCapability.definition()` is a **predefined trusted capability contract**:
+display metadata, input/output contracts, logical target, review-only boundary,
+outcomes, checkpoint/extractors and an empty step list. It also supplies a small
+trusted vocabulary of page headings and stable row tokens. These declarations
+are not discovered by the model. The **ordered steps**, their observed controls,
+needed row context and resulting heading postconditions come from actual
+successful automation execution. The hand-authored gate 1 fixture is not used as
+a recorded step plan or relabeled as live evidence.
+
+Capture occurs inside `BrowserSession.execute`, using the same element handle
+that passes policy checks and receives the action. Before acting, the recorder
+verifies its role/exact accessible name against the trusted control vocabulary
+and verifies exact-one resolution back to that handle. Duplicate controls use
+bounded nearest-row cell text. Only an observed whole cell equal to a trusted
+stable token (currently `Savings`) or exactly one STRING invocation value can
+supply context; the latter becomes a whole `${inputs.name}` expression. Whole
+row text, names, balances and dynamic account identifiers are never copied.
+Unknown, ambiguous or unusable contexts disqualify compilation, not silently
+fall back to a selector. An already unique control needs no row context.
+
+After the action succeeds, clicks require one visible, uniquely named, approved
+H1 heading in the resulting UI. No model-provided postcondition is accepted.
+Only then is the successful action appended to the private in-memory trace.
+Rejected/failed actions, WAIT and COMPLETE do not become artifact steps.
+Until the schema supports deterministic waits, any WAIT permanently marks a
+compilation-enabled run `TRACE_NOT_REPLAYABLE`, even if its checkpoint later verifies.
+The shared request guard is sticky: an intercepted denied request blocks entry,
+observation and subsequent actions with `POLICY_DENIED`. Checks after action/UI
+inspection precede success and trace append; intercepted background submit requests
+cannot be recorded as successful actions or produce an artifact.
+The existing compiler parameterizes fills and rejects unknown literal values.
+Capture failures leave ordinary discovery running but prevent an artifact.
+
+Compilation is permitted only after `SUCCEEDED / CHECKPOINT_VERIFIED`. Failed,
+blocked, timed-out, incomplete and business-outcome discoveries produce no
+artifact. Any handoff, simulated expiry or detected unrecorded native input/
+navigation permanently marks the trace `TRACE_NOT_REPLAYABLE`, including runs
+that subsequently resume and reach the checkpoint. Browser instrumentation tracks
+trusted input/click/pointer/key events outside the exact expected automation
+target/event allowance; it transmits only a boolean, never event text or values.
+This is cooperative instrumentation, not tamper-resistant attribution: use an
+exclusively automation-controlled browser for compilable runs. No manual action
+is inferred or reconstructed.
+
+The same UUID appears in `DiscoveryRunner.Result.runId`, every redacted event,
+the new default `flow-{runId}.jsonl` filename, the private trace and compiled
+`Provenance.traceId`. Compilation rejects mismatched IDs or filenames without
+the run UUID. Existing evidence files are never rewritten. Custom
+`discovery.evidence` paths can include the literal `{runId}` placeholder.
+`COMPILED_TRACE` means execution-derived, not proof of a live model call; correlate
+the UUID with the event stream's `liveModel` flag. UUID correlation is not a
+cryptographic attestation.
+
+The separate, redacted `CompilationResult` reports `INCOMPLETE`, `COMPILED`,
+`PERSISTED`, `DISCOVERY_NOT_VERIFIED`, `TRACE_NOT_REPLAYABLE`,
+`SEMANTIC_CAPTURE_FAILED`, `COMPILATION_REJECTED`, `OUTPUT_COLLISION` or
+`PERSISTENCE_FAILED`. Only COMPILED/PERSISTED carry an artifact in memory.
+Its display contains only code, UUID and recorded successful-action count,
+not discovery values, result details, descriptors or exception messages.
+
+### Persistence is explicit and disabled by default
+
+The existing discovery flow accepts trusted host configuration:
+
+- `discovery.compile=true`: enable capture and return the compiled artifact
+  in memory after verified completion. Default: false.
+- `discovery.persist-artifact=true`: additionally publish the validated
+  artifact. Requires compilation to be enabled. Default: false.
+- `discovery.artifact-directory`: trusted host output directory (default
+  `artifacts`); neither the model nor the artifact controls this path.
+
+The only final filename is `capability-<runId>.json`. The store validates first,
+writes and flushes a temporary file in the trusted directory, then atomically
+creates a hard link at the final name. Existing destinations—including
+concurrent collisions—are never replaced. There is no unsafe move/overwrite
+fallback if the filesystem does not support hard links. Temporary files are
+cleaned up; rejected runs do not create the artifact directory. No input values,
+extracted details, runtime IDs, raw HTML, selectors, transcripts or handles are
+persisted. Only bounded approved semantic labels and contract expressions survive.
+
+These flags are documented for a separately authorized future run; no live
+discovery or persistence demonstration was performed for this gate.
+
+### Offline integration contract (not authentic evidence)
+
+```sh
+cd /Users/surabhimarathe/interfaceai-automation
+./gradlew test --tests '*DiscoveryCompilationTest'
+./gradlew test --rerun-tasks
+git diff --check
+```
+
+Tests use scripted decisions through the real BrowserSession and synthetic target,
+then replay the compiled artifact and check all seven typed outputs. They cover
+stable/parameterized row context, unusable/PII-only contexts, ambiguous headings,
+partial/failed/blocked/timed-out/outcome runs, same-browser manual input, resumed
+handoff, provenance correlation and atomic collision handling. A classloader
+isolation test runs discovery, compilation and replay with all OpenRouter classes
+unavailable. The provider-specific exception was decoupled from the runner so
+scripted execution does not load a model client.
+
+Redacted log fixtures and persisted artifacts produced by these tests live only
+in temporary test directories. **They are non-live test output, not authentic
+LLM discovery evidence.** No new repository evidence is generated. Scope remains
+the predefined fee-review contract and approved heading/row vocabulary; arbitrary
+applications, automatic contract inference, human-action reconstruction, and a
+live model-to-artifact demonstration remain out of scope.

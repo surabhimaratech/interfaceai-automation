@@ -28,7 +28,10 @@ public final class BrowserPolicyGuard {
             e => e.tagName === 'A' ? e.href :
                  (e.form && (e.type === 'submit' || e.type === 'image')) ? (e.formAction || e.form.action) : null
             """);
-        String name = (String) target.evaluate("""
+        return policy.permits(type, page.url(), destination, controlName(target));
+    }
+    public static String controlName(ElementHandle target) {
+        return (String) target.evaluate("""
             e => {
                 const ids = (e.getAttribute('aria-labelledby') || '').trim().split(/\\s+/).filter(Boolean);
                 const referenced = ids.map(id => document.getElementById(id)?.textContent || '').join(' ');
@@ -37,6 +40,5 @@ public final class BrowserPolicyGuard {
                     e.innerText || (e.type === 'submit' ? e.value : '') || '').replace(/\\s+/g, ' ').trim();
             }
             """);
-        return policy.permits(type, page.url(), destination, name);
     }
 }

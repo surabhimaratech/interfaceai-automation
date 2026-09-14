@@ -9,7 +9,7 @@ import java.util.*;
 
 /** Exactly one bounded tool decision; no fallback model and no arbitrary code execution. */
 public final class OpenRouterClient implements DecisionClient {
-    public static final String MODEL = "anthropic/claude-sonnet-5";
+    public static final String MODEL = DecisionModel.PINNED_ID;
     private final URI endpoint;
     private final String key;
     private final HttpClient http;
@@ -78,7 +78,7 @@ public final class OpenRouterClient implements DecisionClient {
         catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new ModelFailure("MODEL_INTERRUPTED"); }
         catch (Exception e) { throw new ModelFailure("MODEL_REQUEST_FAILED"); }
     }
-    public static final class ModelFailure extends RuntimeException {
+    public static final class ModelFailure extends DecisionFailure {
         public ModelFailure(String code) { super(code); }
     }
 }

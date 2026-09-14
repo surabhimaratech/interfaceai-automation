@@ -2,6 +2,8 @@ package com.surabhimarathe.interfaceautomation.discovery;
 
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.ServiceWorkerPolicy;
+import com.surabhimarathe.interfaceautomation.artifact.LocatorSpec;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -19,6 +21,74 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
     private boolean unexpectedDialog;
     private volatile long operationMillis = 5000;
     private HandoffCoordinator handoff;
+    private ExecutedTrace executedTrace;
+    private String traceGate;
+    private boolean traceAutomation;
+
+    /** Opt-in before navigation. All declarations/paths/parameters are supplied by trusted host code. */
+    public void enableCompilation(TrustedCapabilityDefinition definition, Map<String, Object> parameters,
+                                  UUID runId, Path trustedOutputDirectory) {
+        call(() -> {
+            if (executedTrace != null || !"about:blank".equals(page.url())) throw new IllegalStateException("CAPTURE_MUST_START_BEFORE_RUN");
+            executedTrace = new ExecutedTrace(definition, parameters, policy, runId, trustedOutputDirectory);
+            traceGate = "__trace_" + runId.toString().replace("-", "");
+            context.exposeBinding("__executionTraceInput", (source, args) -> {
+                if (args.length == 1 && Boolean.TRUE.equals(args[0])) executedTrace.manual();
+                return null;
+            });
+            String script = """
+                (() => {
+                    let target = null;
+                    let pending = [];
+                    let allowance = {};
+                    window['%s'] = {
+                        begin: (element, kind) => { target = element; allowance = kind === "FILL" ? {input: 1} : {pointerdown: 1, click: 1}; },
+                        end: async () => { target = null; await Promise.all(pending); pending = []; }
+                    };
+                    for (const kind of ['input', 'click', 'pointerdown', 'keydown']) {
+                        document.addEventListener(kind, event => {
+                            if (!event.isTrusted) return;
+                            const expected = target && (event.target === target || target.contains(event.target))
+                                && (allowance[event.type] || 0) > 0;
+                            if (expected) allowance[event.type]--;
+                            else pending.push(window.__executionTraceInput(true));
+                        }, true);
+                    }
+                })();
+                """.formatted(traceGate);
+            context.addInitScript(script);
+            page.evaluate(script);
+            page.onFrameNavigated(frame -> {
+                if (frame == page.mainFrame() && !traceAutomation) executedTrace.manual();
+            });
+            return null;
+        });
+    }
+    @Override public void bindRun(UUID runId, boolean correlatedFilename) {
+        call(() -> { if (executedTrace != null) executedTrace.bind(runId, correlatedFilename); return null; });
+    }
+    @Override public void discoveryFinished(DiscoveryRunner.Result result) {
+        if (executedTrace == null) return;
+        try { call(() -> { endTraceAction(); requirePolicy(); return null; }); }
+        catch (PolicyDeniedException ex) { executedTrace.invalidate(); }
+        catch (RuntimeException ex) { executedTrace.manual(); }
+        // Compilation/persistence has no UI work and must not turn a finished discovery into a browser timeout.
+        executedTrace.finish(result);
+    }
+    public CompilationResult compilationResult() {
+        return call(() -> executedTrace == null ? null : executedTrace.result());
+    }
+    private void beginTraceAction(ElementHandle target, UiAction.Type type) {
+        if (executedTrace == null) return;
+        traceAutomation = true;
+        target.evaluate("(e, args) => window[args.key].begin(e, args.kind)", Map.of("key", traceGate, "kind", type.name()));
+    }
+    private void endTraceAction() {
+        if (executedTrace == null) return;
+        try { page.evaluate("key => window[key] ? window[key].end() : null", traceGate); }
+        catch (RuntimeException ex) { executedTrace.invalidate(); }
+        finally { traceAutomation = false; }
+    }
 
     @Override public void attachHandoff(HandoffCoordinator coordinator) {
         call(() -> {
@@ -41,6 +111,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
     @Override public void simulateExpiry() {
         call(() -> {
             requireAutomation();
+            if (executedTrace != null) executedTrace.manual();
             page.evaluate("""
                 () => {
                   const overlay = document.createElement('section');
@@ -58,7 +129,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
         });
     }
     @Override public void giveToHuman(HandoffCoordinator.Reason reason, int step) {
-        call(() -> { requireAutomation(); latest = null; handoff.request(reason, step); return null; });
+        call(() -> { requireAutomation(); if (executedTrace != null) executedTrace.manual(); latest = null; handoff.request(reason, step); return null; });
     }
     @Override public void pumpHumanEvents() {
         // Dispatch browser input callbacks without navigating, reading fields or issuing actions.
@@ -73,7 +144,8 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
         operationMillis = Math.max(1, Math.min(5000, remaining.toMillis()));
     }
     @Override public void waitBriefly() {
-        call(() -> { requireAutomation(); page.waitForTimeout(Math.min(250, operationMillis)); return null; });
+        call(() -> { requireAutomation(); if (executedTrace != null) executedTrace.nonReplayable();
+            requirePolicy(); page.waitForTimeout(Math.min(250, operationMillis)); requirePolicy(); return null; });
     }
 
     public BrowserSession(ActionPolicy policy) { this(policy, false); }
@@ -106,14 +178,20 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
         return call(() -> {
             requireAutomation();
             if (!policy.allowsUrl(url)) throw new IllegalArgumentException("ENTRY_POLICY_DENIED");
-            page.navigate(url);
-            return observeInternal();
+            traceAutomation = true;
+            try { requirePolicy(); page.navigate(url); return observeInternal(); }
+            catch (RuntimeException ex) { requirePolicy(); throw ex; }
+            finally { traceAutomation = false; }
         });
     }
-    public Observation observe() { return call(this::observeInternal); }
+    public Observation observe() { return call(() -> {
+        try { return observeInternal(); }
+        catch (RuntimeException ex) { requirePolicy(); throw ex; }
+    }); }
     public ActionResult execute(UiAction action) {
         return call(() -> {
             requireAutomation();
+            if (policyGuard.denied()) return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
             if (action.type() != UiAction.Type.FILL && action.type() != UiAction.Type.CLICK)
                 return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
             if (latest == null || !latest.id().equals(action.observationId()))
@@ -127,10 +205,15 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
                     return result(ActionResult.Status.BLOCKED, ActionResult.Code.TARGET_CHANGED);
                 if (unexpectedDialog || !policyGuard.permits(action, page, target))
                     return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
+                LocatorSpec durable = executedTrace == null ? null : executedTrace.before(page, target, action);
+                beginTraceAction(target, action.type());
+                requirePolicy();
                 if (action.type() == UiAction.Type.FILL) {
                     if (!"textbox".equals(control.kind()) || !target.isEditable())
                         return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
+                    requirePolicy();
                     target.fill(action.value());
+                    requirePolicy();
                     if (!action.value().equals(target.inputValue()))
                         return result(ActionResult.Status.FAILED, ActionResult.Code.BROWSER_FAILURE);
                 } else {
@@ -138,23 +221,42 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
                         return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
                     target.click();
                 }
-                if (unexpectedDialog || !policy.allowsUrl(page.url()))
+                if (policyGuard.denied() || unexpectedDialog || !policy.allowsUrl(page.url()))
                     return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
                 Observation after = observeInternal();
-                return new ActionResult(ActionResult.Status.SUCCEEDED,
+                var post = executedTrace == null ? null : executedTrace.after(page, action);
+                endTraceAction();
+                requirePolicy();
+                ActionResult succeeded = new ActionResult(ActionResult.Status.SUCCEEDED,
                     action.type() == UiAction.Type.FILL ? ActionResult.Code.VALUE_VERIFIED : ActionResult.Code.CLICK_COMPLETED, after);
+                if (executedTrace != null) executedTrace.succeeded(action, succeeded, durable, post);
+                return succeeded;
             } catch (RuntimeException e) {
                 latest = null;
+                if (policyGuard.denied() || e instanceof PolicyDeniedException)
+                    return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
                 return new ActionResult(ActionResult.Status.FAILED, ActionResult.Code.BROWSER_FAILURE, null);
-            }
+            } finally { if (traceAutomation) endTraceAction(); }
         });
     }
     private ActionResult result(ActionResult.Status status, ActionResult.Code code) {
         latest = null; // A rejected action must be followed by a fresh observation.
+        if (policyGuard.denied()) {
+            if (executedTrace != null) executedTrace.invalidate();
+            return new ActionResult(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED, null);
+        }
         return new ActionResult(status, code, null);
+    }
+    private void requirePolicy() {
+        if (policyGuard.denied()) {
+            latest = null;
+            if (executedTrace != null) executedTrace.invalidate();
+            throw new PolicyDeniedException();
+        }
     }
     private Observation observeInternal() {
         requireAutomation();
+        requirePolicy();
         if (!policy.allowsUrl(page.url())) throw new IllegalStateException("OBSERVATION_POLICY_DENIED");
         for (var h : handles.values()) h.dispose();
         handles.clear();
@@ -182,6 +284,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
         latest = new Observation(UUID.randomUUID(), page.url(),
             page.locator("h1").count() == 0 ? "" : page.locator("h1").first().innerText(), controls,
             messages("[role=status]"), messages("[role=alert]"), details);
+        requirePolicy();
         return latest;
     }
     private List<String> messages(String selector) {
@@ -217,7 +320,10 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
         try { return pending.get(operationMillis + (page == null ? 15000 : 0), TimeUnit.MILLISECONDS); }
         catch (TimeoutException e) { pending.cancel(true); throw new IllegalStateException("BROWSER_TIMEOUT"); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); throw new IllegalStateException("BROWSER_INTERRUPTED"); }
-        catch (ExecutionException e) { throw new IllegalStateException("BROWSER_OPERATION_FAILED"); }
+        catch (ExecutionException e) {
+            if (e.getCause() instanceof PolicyDeniedException denied) throw denied;
+            throw new IllegalStateException("BROWSER_OPERATION_FAILED");
+        }
     }
     @Override public void close() {
         operationMillis = 5000; // Cleanup has its own bound after the decision deadline.

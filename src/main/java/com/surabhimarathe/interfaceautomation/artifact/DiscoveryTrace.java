@@ -14,7 +14,8 @@ import static com.surabhimarathe.interfaceautomation.artifact.ValidationCode.INV
 /**
  * Ephemeral compiler input, not a persistence DTO. The caller supplies semantic descriptors
  * from the fresh observation associated with the executed action. No control IDs or handles
- * are retained. This seam does not change the discovery runner or claim trace authenticity.
+ * are retained. The integrated BrowserSession recorder owns its trace privately; this
+ * lower-level construction API alone does not establish execution authenticity.
  */
 @JsonSerialize(using = DiscoveryTrace.NoPersistence.class)
 public final class DiscoveryTrace {
@@ -40,7 +41,10 @@ public final class DiscoveryTrace {
         @Override public String toString() { return "DiscoveryTrace.Entry[redacted]"; }
     }
 
-    private final UUID id = UUID.randomUUID();
+    private final UUID id;
+    public DiscoveryTrace() { this(UUID.randomUUID()); }
+    public DiscoveryTrace(UUID runId) { this.id = java.util.Objects.requireNonNull(runId); }
+    public synchronized int size() { return entries.size(); }
     private final List<Entry> entries = new ArrayList<>();
 
     public synchronized void recordSuccessful(UiAction action, ActionResult result,
