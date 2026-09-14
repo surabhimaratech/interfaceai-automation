@@ -30,13 +30,31 @@ public final class ReplayCli {
             properties.setProperty("discovery.allowed-origin", System.getenv().getOrDefault("REPLAY_ORIGIN",
                     properties.getProperty("discovery.allowed-origin")));
             env.getPropertySources().addFirst(new PropertiesPropertySource("trustedReplayConfiguration", properties));
-            var targets = new TargetRegistry(Map.of(properties.getProperty("replay.target-id"), DiscoveryPolicyConfiguration.from(env)));
+            String targetId = properties.getProperty("replay.target-id");
+            String expiryName = System.getenv("REPLAY_SESSION_EXPIRY_NAME");
+            var markers = expiryName == null ? Map.<String,SessionExpiryMarker>of() : Map.of(targetId,
+                    new SessionExpiryMarker(com.surabhimarathe.interfaceautomation.artifact.LocatorSpec.Role.valueOf(
+                            System.getenv().getOrDefault("REPLAY_SESSION_EXPIRY_ROLE","ALERT")),expiryName));
+            var targets = new TargetRegistry(Map.of(targetId, DiscoveryPolicyConfiguration.from(env)),markers);
             var options = new ReplayOptions(Duration.ofMillis(Long.parseLong(System.getenv().getOrDefault("REPLAY_STEP_TIMEOUT_MS", "5000"))),
                     Duration.ofMillis(Long.parseLong(System.getenv().getOrDefault("REPLAY_TIMEOUT_MS", "60000"))),
                     Boolean.parseBoolean(System.getenv().getOrDefault("REPLAY_HEADLESS", "false")));
             var invocation = new InvocationParameters(Map.of("memberId", System.getenv("REPLAY_MEMBER_ID"),
                     "amount", new BigDecimal(System.getenv("REPLAY_AMOUNT")), "reason", System.getenv("REPLAY_REASON")));
-            result = new ReplayEngine(targets, options).run(json, invocation);
+            // Host environment only. Disabled unless an explicit trusted directory is provided.
+            String diagnosticDirectory = System.getenv("REPLAY_DIAGNOSTIC_DIRECTORY");
+            DiagnosticStore store = diagnosticDirectory == null || diagnosticDirectory.isBlank()
+                    ? null : new DiagnosticStore(Path.of(diagnosticDirectory));
+            if (Boolean.parseBoolean(System.getenv().getOrDefault("REPLAY_HANDOFF","false"))) {
+                if (markers.isEmpty() || options.headless()) throw new IllegalArgumentException("INVALID_HANDOFF_CONFIGURATION");
+                try (var handoff = new ReplayHandoff(Duration.ofMillis(Long.parseLong(
+                            System.getenv().getOrDefault("REPLAY_HANDOFF_TIMEOUT_MS","60000"))),
+                            Integer.parseInt(System.getenv().getOrDefault("REPLAY_HANDOFF_LIMIT","2")));
+                     var operator = new ReplayOperatorServer(handoff,Integer.parseInt(
+                            System.getenv().getOrDefault("REPLAY_OPERATOR_PORT","18082")))) {
+                    result = new ReplayEngine(targets, options, store, handoff).run(json,invocation);
+                }
+            } else result = new ReplayEngine(targets, options, store).run(json, invocation);
         } catch (Exception ex) { result = ReplayResult.failure(ReplayResult.Code.INVALID_PARAMETERS, 0); }
         System.out.println(result); // Only fixed metadata and the validated artifact outcome identifier; no values.
     }

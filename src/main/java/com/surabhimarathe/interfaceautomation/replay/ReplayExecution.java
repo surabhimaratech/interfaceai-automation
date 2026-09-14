@@ -22,12 +22,17 @@ final class ReplayExecution {
     private long stepDeadline;
     private Page page;
     private BrowserPolicyGuard guard;
-    private boolean dialog;
+    private final ReplayDiagnostics diagnostics;
+    private final SessionExpiryMarker expiryMarker;
+    private final ReplayHandoff handoff;
+    private int handoffs;
     ReplayExecution(CapabilityArtifact artifact, Map<String, Object> inputs, ActionPolicy policy,
-                    ReplayOptions options, ReplayEngine.BrowserLauncher launcher, long deadline, AtomicInteger step) {
+                    ReplayOptions options, ReplayEngine.BrowserLauncher launcher, long deadline, AtomicInteger step, ReplayDiagnostics diagnostics, SessionExpiryMarker expiryMarker, ReplayHandoff handoff) {
         this.artifact = artifact; this.inputs = inputs; this.policy = policy; this.options = options;
         this.launcher = launcher; this.deadline = deadline; this.step = step;
         this.stepDeadline = deadline;
+        this.diagnostics = diagnostics;
+        this.expiryMarker = expiryMarker; this.handoff = handoff;
     }
 
     ReplayResult run(String entry) {
@@ -37,32 +42,21 @@ final class ReplayExecution {
                     .setHeadless(options.headless()).setTimeout(launchTimeout))) {
                 remaining();
                 var context = browser.newContext(new Browser.NewContextOptions().setServiceWorkers(ServiceWorkerPolicy.BLOCK));
-                guard = new BrowserPolicyGuard(context, policy);
+                guard = new BrowserPolicyGuard(context, policy, diagnostics::deniedRequest);
                 page = context.newPage();
-                page.onDialog(d -> { dialog = true; d.dismiss(); });
-                context.onPage(p -> { if (p != page) { dialog = true; p.close(); } });
+                page.onDialog(d -> { diagnostics.dialog(); d.dismiss(); });
+                context.onPage(p -> { if (p != page) { diagnostics.popup(); p.close(); } });
+                diagnostics.phase(ReplayDiagnostic.Phase.LOAD);
                 beginStep();
                 page.navigate(entry);
                 authorizedPage();
                 for (StepSpec spec : artifact.steps()) {
-                    step.incrementAndGet();
-                    beginStep();
-                    businessOutcome();
-                    ElementHandle target = unique(spec.locator());
-                    try {
-                        // Use the resolved handle, not a lazy locator that could retarget after authorization.
-                        UiAction.Type action = spec.action() == StepSpec.Action.FILL ? UiAction.Type.FILL : UiAction.Type.CLICK;
-                        remaining();
-                        if (!guard.permits(action, page, target)) fail(POLICY_DENIED);
-                        remaining();
-                        if (!target.isVisible() || !target.isEnabled()) fail(POSTCONDITION_FAILED);
-                        if (spec.action() == StepSpec.Action.FILL) {
-                            if (!target.isEditable()) fail(POLICY_DENIED);
-                            target.fill(fillValue(spec), new ElementHandle.FillOptions().setTimeout(remaining()));
-                        } else target.click(new ElementHandle.ClickOptions().setTimeout(remaining()));
-                    } finally { target.dispose(); }
+                    diagnostics.step(step.incrementAndGet(), spec.id());
+                    // Only an unstarted action with a verified expiry marker can return false.
+                    while (!performAction(spec)) transfer(spec);
                     authorizedPage();
-                    businessOutcome(); // Before the success postcondition, including on HTTP 200 business errors.
+                    businessOutcome();
+                    diagnostics.phase(ReplayDiagnostic.Phase.POSTCONDITION);
                     verify(spec.postcondition(), POSTCONDITION_FAILED);
                 }
                 beginStep();
@@ -72,19 +66,107 @@ final class ReplayExecution {
                 businessOutcome();
                 marker();
                 remaining();
+                diagnostics.phase(ReplayDiagnostic.Phase.CLEANUP);
                 return new ReplayResult(ReplayResult.Status.SUCCEEDED, CHECKPOINT_VERIFIED, null, step.get(), output);
             }
         } catch (Outcome found) {
-            return new ReplayResult(ReplayResult.Status.EXPECTED_OUTCOME, BUSINESS_OUTCOME, found.code, step.get(), Map.of());
+            if (diagnostics.safetyCode(null) != null) return failure(BROWSER_FAILURE);
+            return new ReplayResult(ReplayResult.Status.EXPECTED_OUTCOME, BUSINESS_OUTCOME, found.code, step.get(), Map.of())
+                    .withDiagnostic(diagnostics.snapshot(BUSINESS_OUTCOME));
         } catch (Stop stop) {
-            return ReplayResult.failure(stop.code, step.get());
+            return failure(stop.code);
         } catch (com.microsoft.playwright.TimeoutError ex) {
-            return ReplayResult.failure(guard != null && guard.denied() ? POLICY_DENIED : TIMEOUT, step.get());
+            return failure(TIMEOUT);
         } catch (RuntimeException ex) {
-            return ReplayResult.failure(guard != null && guard.denied() ? POLICY_DENIED :
-                    System.nanoTime() >= Math.min(deadline, stepDeadline) || Thread.currentThread().isInterrupted()
-                            ? TIMEOUT : BROWSER_FAILURE, step.get());
+            return failure(Thread.currentThread().isInterrupted() ? INTERRUPTED :
+                    System.nanoTime() >= Math.min(deadline, stepDeadline) ? TIMEOUT : BROWSER_FAILURE);
         }
+    }
+
+    private ReplayResult failure(ReplayResult.Code fallback) {
+        return diagnostics.failure(fallback);
+    }
+
+    private boolean performAction(StepSpec spec) {
+        beginStep();
+        businessOutcome();
+        diagnostics.phase(ReplayDiagnostic.Phase.LOCATOR);
+        ElementHandle target = unique(spec.locator());
+        try {
+            diagnostics.phase(ReplayDiagnostic.Phase.ACTION);
+            diagnostics.expected(spec.locator());
+            diagnostics.count(1);
+            UiAction.Type action = spec.action() == StepSpec.Action.FILL ? UiAction.Type.FILL : UiAction.Type.CLICK;
+            remaining();
+            if (!guard.permits(action, page, target)) fail(POLICY_DENIED);
+            remaining();
+            if (sessionExpired()) return false;
+            if (!target.isVisible() || !target.isEnabled()) fail(POSTCONDITION_FAILED);
+            if (spec.action() == StepSpec.Action.FILL && !target.isEditable()) fail(POLICY_DENIED);
+            // Recheck after actionability reads, immediately before dispatch.
+            if (sessionExpired()) return false;
+            double timeout = remaining();
+            diagnostics.actionStarted();
+            if (spec.action() == StepSpec.Action.FILL)
+                target.fill(fillValue(spec), new ElementHandle.FillOptions().setTimeout(timeout));
+            else target.click(new ElementHandle.ClickOptions().setTimeout(timeout));
+            return true;
+        } finally { target.dispose(); } // Never retain a handle across human ownership.
+    }
+
+    private boolean sessionExpired() {
+        if (expiryMarker == null) return false;
+        remaining();
+        var previous = diagnostics.snapshot(null);
+        diagnostics.phase(ReplayDiagnostic.Phase.SESSION_CHECK);
+        var marker = page.getByRole(AriaRole.valueOf(expiryMarker.role().name()),
+                new Page.GetByRoleOptions().setName(expiryMarker.name()).setExact(true));
+        int visible = 0;
+        int count = marker.count();
+        if (count > 200) { diagnostics.count(201); fail(AMBIGUOUS_LOCATOR); }
+        for (int i = 0; i < count; i++) { remaining(); if (marker.nth(i).isVisible()) visible++; }
+        diagnostics.count(visible);
+        remaining();
+        if (visible > 1) fail(AMBIGUOUS_LOCATOR);
+        diagnostics.restore(previous);
+        if (visible == 1) diagnostics.expiry();
+        return visible == 1;
+    }
+
+    private void transfer(StepSpec spec) {
+        authorizedPage();
+        if (diagnostics.hasActionStarted()) fail(OWNERSHIP_DENIED);
+        diagnostics.phase(ReplayDiagnostic.Phase.HANDOFF);
+        diagnostics.expected(spec.locator());
+        if (handoff == null) fail(HUMAN_ACTION_REQUIRED);
+        if (handoffs >= handoff.limit()) fail(HANDOFF_LIMIT);
+        handoffs++;
+        diagnostics.beginHandoff();
+        handoff.request(step.get());
+        long until = Math.min(deadline, System.nanoTime() + handoff.timeout().toNanos());
+        while (handoff.status().owner() == HandoffCoordinator.Owner.HUMAN) {
+            handoffSafety(until);
+            // Dispatch callbacks only: no observation, locator or action while the human owns the UI.
+            page.waitForTimeout(Math.max(1, Math.min(50, (until - System.nanoTime()) / 1_000_000)));
+        }
+        diagnostics.phase(ReplayDiagnostic.Phase.RESUMING);
+        handoffSafety(until);
+        try { handoff.requireResuming(); }
+        catch (IllegalStateException ex) { fail(OWNERSHIP_DENIED); }
+        page.waitForTimeout(1);
+        handoffSafety(until);
+        if (page.isClosed() || !page.context().browser().isConnected()) fail(BROWSER_FAILURE);
+        if (!policy.allowsUrl(page.url())) fail(POLICY_DENIED);
+        handoff.reclaim();
+        diagnostics.endHandoff();
+        // The caller restarts only this unstarted step, with a new budget and a fresh handle.
+    }
+
+    private void handoffSafety(long until) {
+        var unsafe = diagnostics.safetyCode(null);
+        if (unsafe != null) fail(unsafe);
+        if (Thread.currentThread().isInterrupted()) fail(INTERRUPTED);
+        if (System.nanoTime() >= until) fail(HANDOFF_TIMEOUT);
     }
 
     private String fillValue(StepSpec s) {
@@ -97,8 +179,15 @@ final class ReplayExecution {
     }
 
     private double remaining() {
+        if (handoff != null) {
+            try { handoff.requireAutomation(); }
+            catch (IllegalStateException ex) { fail(OWNERSHIP_DENIED); }
+        }
+        var unsafe = diagnostics.safetyCode(null);
+        if (unsafe != null) fail(unsafe);
+        if (Thread.currentThread().isInterrupted()) fail(INTERRUPTED);
         long nanos = Math.min(deadline, stepDeadline) - System.nanoTime();
-        if (nanos <= 0 || Thread.currentThread().isInterrupted()) fail(TIMEOUT);
+        if (nanos <= 0) fail(TIMEOUT);
         double millis = Math.max(1, nanos / 1_000_000.0);
         if (page != null) {
             page.setDefaultTimeout(millis);
@@ -109,12 +198,15 @@ final class ReplayExecution {
 
     private void authorizedPage() {
         remaining();
-        if (guard.denied() || dialog || !policy.allowsUrl(page.url())) fail(POLICY_DENIED);
+        if (guard.denied() || !policy.allowsUrl(page.url())) fail(POLICY_DENIED);
     }
 
     private void businessOutcome() {
         authorizedPage();
+        var previous = diagnostics.snapshot(null);
+        diagnostics.phase(ReplayDiagnostic.Phase.OUTCOME);
         String found = null;
+        ReplayDiagnostic foundDiagnostic = null;
         for (OutcomeSpec o : artifact.outcomes()) {
             List<ElementHandle> matches = matches(o.condition().locator());
             try {
@@ -122,20 +214,27 @@ final class ReplayExecution {
                 if (matches.size() == 1) {
                     if (found != null) fail(AMBIGUOUS_LOCATOR);
                     found = o.code();
+                    foundDiagnostic = diagnostics.snapshot(BUSINESS_OUTCOME);
                 }
             } finally { dispose(matches); }
         }
-        if (found != null) throw new Outcome(found);
+        authorizedPage();
+        if (found != null) {
+            diagnostics.restore(foundDiagnostic);
+            throw new Outcome(found);
+        }
+        diagnostics.restore(previous);
     }
 
     private List<ElementHandle> matches(LocatorSpec spec) {
+        diagnostics.expected(spec);
         remaining();
         String name = ContractValues.resolve(spec.accessibleName(), inputs);
         var opts = new Page.GetByRoleOptions();
         if (spec.nameMatch() == LocatorSpec.NameMatch.EXACT) opts.setName(name).setExact(true);
         else opts.setName(Pattern.compile("^" + regexLiteral(name)));
         Locator locator = page.getByRole(AriaRole.valueOf(spec.role().name()), opts);
-        if (locator.count() > 200) fail(AMBIGUOUS_LOCATOR);
+        if (locator.count() > 200) { diagnostics.count(201); fail(AMBIGUOUS_LOCATOR); }
         List<ElementHandle> selected = new ArrayList<>();
         List<ElementHandle> candidates = locator.elementHandles();
         try {
@@ -161,6 +260,7 @@ final class ReplayExecution {
                 }
                 selected.add(h);
             }
+            diagnostics.count(selected.size());
             remaining();
             return selected;
         } catch (RuntimeException ex) {
@@ -196,10 +296,12 @@ final class ReplayExecution {
     }
 
     private void marker() {
+        diagnostics.phase(ReplayDiagnostic.Phase.CHECKPOINT);
         verify(new PostconditionSpec(PostconditionSpec.Kind.VISIBLE, artifact.checkpoint().marker(), null), CHECKPOINT_FAILED);
     }
 
     private Map<String, Object> extract() {
+        diagnostics.phase(ReplayDiagnostic.Phase.EXTRACTION);
         Map<String, Object> values = new LinkedHashMap<>();
         for (ExtractorSpec e : artifact.checkpoint().extractors()) {
             remaining();
@@ -246,7 +348,10 @@ final class ReplayExecution {
         }
         return escaped.toString();
     }
-    private static void fail(ReplayResult.Code code) { throw new Stop(code); }
+    private void fail(ReplayResult.Code code) {
+        if (code == POLICY_DENIED) diagnostics.deniedPolicy();
+        throw new Stop(code);
+    }
     private static final class Stop extends RuntimeException {
         final ReplayResult.Code code;
         Stop(ReplayResult.Code code) { super("REPLAY_STOP", null, false, false); this.code = code; }

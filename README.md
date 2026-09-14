@@ -55,7 +55,11 @@ The target, one-action proof, and bounded discovery loop are implemented.
 Minimal same-session human takeover is also implemented. Day 2 includes the
 versioned artifact model and isolated compiler seam (gate 1), plus deterministic
 artifact replay (gate 2). Gate 3 connects successful browser execution to compilation
-behind an opt-in flag; only scripted offline integration has been tested so far.
+behind an opt-in flag. A successful live discover → compile → replay demonstration
+is documented in `evidence/README.md` under run UUID
+`dc55aa1d-d34c-4735-bc46-b36bbc64f4b0`. Day 3 gate 1 adds replay diagnostics,
+recoverability classification and opt-in privacy-safe diagnostic storage. Day 3
+gate 2 adds bounded, pre-action same-session human handoff during deterministic replay.
 Real authentication is not implemented; session expiry is an explicit UI
 simulation. Offline browser/client/replay tests are not live LLM evidence.
 
@@ -150,8 +154,9 @@ returns HUMAN_REQUIRED. Invalid/stale
 decisions, step limits, deadline expiry and provider errors terminate explicitly.
 
 Flow evidence uses unique `evidence/flow-<uuid>.jsonl` files with state transitions,
-step counts and fixed result codes. Previous evidence is preserved. No reusable
-artifact or replay engine is created.
+step counts and fixed result codes. Previous evidence is preserved. The original
+Day 1 flow did not create reusable artifacts; Day 2 compilation is separately
+opt-in, and replay is a separate entry point.
 
 ## Repetition guard and human handoff
 
@@ -245,8 +250,8 @@ fixture, **not authentic discovery evidence**; nothing was added to `evidence/`.
   `ROW_VALUE` means the single data cell of the unique matched row (multiple cells
   must fail); `TEXT` reads semantic target text. `TEXT` and `USD_DECIMAL` formats
   declare string or dollar-decimal output respectively. Optional expected-input
-  expressions require the same contract type. These are declarations, not an
-  implemented extractor or replay engine. Outcomes must be non-empty, have unique
+  expressions require the same contract type. Gate 1 defined these declarations;
+  gate 2 implements their extraction and replay semantics. Outcomes must be non-empty, have unique
   codes, and declare visible named status/alert conditions. The fixture declares
   `MEMBER_NOT_FOUND` (status named “Member not found”) and `VALIDATION_REJECTED`
   (alert named “VALIDATION_REJECTED”). The target supplies accessible names via
@@ -349,15 +354,18 @@ The typed `ReplayResult` returns:
 - `BLOCKED / POLICY_DENIED`.
 - `FAILED` with `INVALID_ARTIFACT`, `INVALID_PARAMETERS`, `UNKNOWN_TARGET`,
   `ZERO_LOCATOR`, `AMBIGUOUS_LOCATOR`, `POSTCONDITION_FAILED`,
-  `CHECKPOINT_FAILED`, `EXTRACTION_FAILED`, `TIMEOUT` or `BROWSER_FAILURE`.
+  `CHECKPOINT_FAILED`, `EXTRACTION_FAILED`, `TIMEOUT`, `UNEXPECTED_DIALOG`,
+  `INTERRUPTED` or `BROWSER_FAILURE`.
 
-Errors carry only fixed codes and a numeric step; no exception details, input
-values, page text, URLs or partial outputs. Successful outputs are sensitive
+Non-success results now also carry the bounded diagnostics described in Day 3
+below; no exception details, input values, page text, URLs or partial outputs.
+Successful outputs are sensitive
 in-memory return data. Result/parameter `toString()` methods redact values, and
 the CLI prints the redacted result with its effective code, including validated
 artifact identifiers such as `MEMBER_NOT_FOUND` or `VALIDATION_REJECTED`, never
 page text or output values.
-No evidence files, model requests or discovery compilation occur.
+No model requests or discovery compilation occur during replay. Diagnostic
+persistence is off by default and requires explicit trusted host configuration.
 
 Timeout defaults: 5 seconds per step and 60 seconds overall; configurable bounds
 are 1 ms–30 seconds per step and 1 ms–5 minutes overall. Navigation and final
@@ -367,7 +375,8 @@ cleanup runs on the owner thread; an already-dispatched request cannot be undone
 No click/fill is retried by the engine. Playwright may wait for actionability
 within the remaining budget before dispatching a single action. Missing locator
 and postcondition snapshots fail immediately; this gate does not add SPA polling,
-recovery, human handoff during replay, or rollback.
+automatic recovery or rollback. Day 3 gate 2 below adds only a bounded pre-action
+human handoff; it does not retry dispatched actions.
 
 ### Exact local fixture command (not live evidence)
 
@@ -501,8 +510,11 @@ cleaned up; rejected runs do not create the artifact directory. No input values,
 extracted details, runtime IDs, raw HTML, selectors, transcripts or handles are
 persisted. Only bounded approved semantic labels and contract expressions survive.
 
-These flags are documented for a separately authorized future run; no live
-discovery or persistence demonstration was performed for this gate.
+The original gate 3 implementation was verified offline. A subsequent authorized
+live discovery → compilation → replay demonstration completed successfully under
+UUID `dc55aa1d-d34c-4735-bc46-b36bbc64f4b0`; see `evidence/README.md` for the
+unchanged log/artifact linkage, redaction and attestation limitations. Replay used
+the exact compiled artifact with `OPENROUTER_API_KEY` removed. No reversal was submitted.
 
 ### Offline integration contract (not authentic evidence)
 
@@ -526,5 +538,202 @@ Redacted log fixtures and persisted artifacts produced by these tests live only
 in temporary test directories. **They are non-live test output, not authentic
 LLM discovery evidence.** No new repository evidence is generated. Scope remains
 the predefined fee-review contract and approved heading/row vocabulary; arbitrary
-applications, automatic contract inference, human-action reconstruction, and a
-live model-to-artifact demonstration remain out of scope.
+applications, automatic contract inference and human-action reconstruction remain
+out of scope. The separately recorded live demonstration does not turn these
+scripted tests into authentic model evidence.
+
+## Day 3 gate 1: replay diagnostics and recoverability
+
+`ReplayResult` preserves its status/code/outcome and sensitive in-memory outputs,
+and adds a structured `disposition`:
+
+| Disposition | Result | Meaning |
+| --- | --- | --- |
+| `SUCCESS` | `SUCCEEDED / CHECKPOINT_VERIFIED` | All checks passed; outputs unchanged. |
+| `EXPECTED_OUTCOME` | `EXPECTED_OUTCOME / <validated outcome code>` | Declared business branch, not a technical failure. |
+| `RECOVERABLE` | `FAILED / TIMEOUT` or `FAILED / HUMAN_ACTION_REQUIRED` | Bounded execution timeout, or trusted expiry requiring an operator when none is configured; never an automatic retry. |
+| `POLICY_BLOCK` | `BLOCKED / POLICY_DENIED` | Non-retryable permission or intercepted-request denial. |
+| `HARD_FAILURE` | Other failures | Includes invalid contracts/parameters, locator, postcondition, checkpoint, extraction and browser failures, `UNEXPECTED_DIALOG`, and `INTERRUPTED`. |
+
+Recoverable is a classification, not a retry or resume instruction. No click/fill
+is automatically retried. An action marked started may already have reached the
+target; inspect/reset state before explicitly invoking another run. Policy blocks,
+unexpected dialogs and unexpected pages take precedence over timeouts and are
+non-retryable. Dialogs are dismissed defensively without retaining their text;
+automation stops afterward. Unexpected pages are closed and fail as
+`BROWSER_FAILURE` with an `unexpectedPage` flag. Cancellation is `INTERRUPTED`,
+not an invitation to retry. No rollback or automatic recovery is added. The
+subsequent gate 2 handoff below is restricted to an unstarted, policy-authorized action.
+
+Every non-success engine result, including an expected business outcome, contains
+a `ReplayDiagnostic`. Successful results have no diagnostic. It contains only:
+
+- the fixed code, numeric step and bounded artifact step ID (null before a step);
+- a fixed phase: validation, parameters, target resolution, launch, load, outcome,
+  locator, action, postcondition, checkpoint, extraction or cleanup;
+- the expected artifact role, name/match mode, optional context and cardinality;
+- a bounded visible-match count and zero/ambiguous/capped indicators; `-1` means
+  not measured, not zero, and `201` indicates the candidate cap was exceeded;
+- fixed condition flags for action started, request/policy denial, dialog/page,
+  timeout, postcondition/checkpoint failure and expected outcome detection.
+
+Expectations are unexpanded artifact declarations, not observed accessible names.
+Whole `${inputs.name}` expressions remain expressions. Known invocation values
+and suspicious literal text (control characters, numeric identifiers, URLs,
+email/secret-like text or markup) are replaced with `[REDACTED]`; identifiers are
+also bounded and checked against invocation values. This conservative filter may
+hide benign labels. It is not general-purpose PII detection for arbitrary artifact
+prose: supply reviewed artifact declarations, never embed sensitive literals.
+No page text, resolved input/output values, target URLs, HTML, selectors, dialog
+text, exception details, screenshots or browser handles are collected in diagnostics.
+Failed lookup context is preserved when outcome probes find no business outcome.
+Diagnostics are snapshots, not DOM dumps or complete event histories.
+
+`ReplayResult.toString()` prints status, disposition, safe effective code, step,
+and `outputs=REDACTED`; it never prints the diagnostic body. When storage is enabled,
+it also prints the fixed diagnostic persistence status, never a filename/path.
+
+### Opt-in diagnostic storage (trusted host only)
+
+Default: off. Java callers explicitly pass `new DiagnosticStore(trustedDirectory)`
+to `ReplayEngine`; the CLI enables it only with `REPLAY_DIAGNOSTIC_DIRECTORY`.
+The artifact/model cannot choose this directory or filename. For a separately
+authorized local replay, after setting the existing `REPLAY_*` invocation values
+and starting the synthetic target, deliberately request a missing member. The
+member ID override applies only to this command, leaving the caller's value unchanged:
+
+```sh
+export REPLAY_DIAGNOSTIC_DIRECTORY=/private/tmp/interfaceai-replay-diagnostics
+env -u OPENROUTER_API_KEY REPLAY_MEMBER_ID=999999 ./gradlew replay --args='src/test/resources/artifacts/prepare-fee-reversal-review.v1.json'
+unset REPLAY_DIAGNOSTIC_DIRECTORY
+```
+
+Expected: status `EXPECTED_OUTCOME`, code `MEMBER_NOT_FOUND`, disposition
+`EXPECTED_OUTCOME`, and `diagnosticPersistence()` equal to `STORED` (printed as
+`diagnostics=STORED`). This invocation creates one new sanitized diagnostic JSON
+file in the configured directory. No reversal is submitted.
+
+Only sanitized diagnostic JSON is persisted for non-success engine results, under
+`diagnostic-<host-generated-uuid>.json`. Successful runs do not create a directory.
+An in-directory temporary file is flushed and atomically hard-linked to the final
+name with create-new semantics. Existing files are never overwritten; temporary
+files are cleaned up. Unsupported hard links fail closed without an overwrite
+fallback. `diagnosticPersistence()` is `DISABLED`, `NOT_APPLICABLE`, `STORED`,
+`COLLISION` or `FAILED`; a storage error does not change the replay disposition/code.
+Storage/cleanup are local I/O outside the bounded UI execution deadline. Trusted
+host directories must not be writable by untrusted actors. CLI configuration/file
+reading errors before engine invocation print a redacted result, but do not write
+diagnostics. Retention/rotation, screenshots and cryptographic attestation are not provided.
+
+Real-browser regression tests cover slow load and review steps without retries,
+dialogs, missing/ambiguous locators, postcondition/checkpoint failures, policy
+denial, unchanged successful outputs, sanitized JSON and atomic collisions. All
+diagnostic test files use temporary directories and are **non-live test output**,
+not repository evidence. Existing Day 2 evidence and artifacts are unchanged.
+
+## Day 3 gate 2: bounded same-session replay handoff
+
+Replay may pause only for an exact, visible, trusted target-configured session
+marker: `TargetRegistry` accepts an optional target-ID → `SessionExpiryMarker`
+mapping. Markers allow only `ALERT` or `STATUS`, with a bounded literal accessible
+name. They are not artifact fields, model decisions, substring searches or inferred
+page prose. Duplicate markers fail closed. Without configured markers replay
+behaves as before; an unrelated alert does not request handoff.
+
+The browser-owner thread resolves the current action and checks its actual URL,
+name and destination through the shared policy guard before considering handoff.
+For this bounded gate, the current control must still be uniquely resolvable and
+policy-authorized; a disabled control can be handed off, but a replaced login page
+with no current-step control fails its locator check. Submit destinations are
+denied before handoff or dispatch. The marker is checked again after actionability
+reads, immediately before dispatch. No timeout or failed action triggers handoff.
+
+`ReplayHandoff` reuses `HandoffCoordinator` without discovery logging, with ownership:
+`AUTOMATION → HUMAN → RESUMING → AUTOMATION`. The action handle is disposed before
+HUMAN ownership. The original Browser, BrowserContext, Page and cookie jar remain
+open; there is no relaunch, new context, navigation reset or cookie copying. While
+HUMAN owns the page, the owner thread only pumps browser callbacks and checks fixed
+safety/deadline flags. It does not observe, resolve controls, extract or execute.
+
+A valid single-use resume signal enters RESUMING. Automation is still prohibited
+there. The browser-owner thread verifies ownership, the current URL, context/page
+health and sticky policy/dialog/popup flags before reclaiming AUTOMATION. Only
+then does it restart the **unstarted** current step with a fresh lookup, permission
+check and per-step budget. It never reuses a pre-handoff handle. If the marker
+remains, another bounded handoff may occur, not an action retry.
+
+The handoff count is bounded to 1–10 and each wait to 1 ms–5 minutes. The existing
+overall replay deadline includes human time and is not extended. A timeout during
+handoff, including the overall deadline, terminates as `HANDOFF_TIMEOUT`. Terminal
+results close ownership, invalidate resume signals and close the browser normally.
+One coordinator belongs to one invocation; it cannot be reused for another run.
+Handoff-enabled runs require headed mode.
+
+New terminal results retain the validated `ReplayResult` status/code invariant:
+
+| Status / code | Disposition | Meaning |
+| --- | --- | --- |
+| `FAILED / HUMAN_ACTION_REQUIRED` | `RECOVERABLE` | Trusted expiry before dispatch, but no coordinator is configured. |
+| `FAILED / HANDOFF_TIMEOUT` | `HARD_FAILURE` | Human wait or its overall budget expired; no automatic resume. |
+| `FAILED / HANDOFF_LIMIT` | `HARD_FAILURE` | Another handoff would exceed the configured count. |
+| `FAILED / OWNERSHIP_DENIED` | `HARD_FAILURE` | Automation attempted outside its ownership state. |
+
+An intercepted request, policy denial, unexpected dialog/page or already-started
+action can never enter/re-enter handoff. Unsafe flags take precedence over timeout.
+New diagnostics contain only fixed session-expiry/handoff flags, bounded count and
+`SESSION_CHECK`, `HANDOFF` or `RESUMING` phases. Marker prose, human-entered values,
+URLs, cookies, tokens and browser handles are never recorded. Existing redacted
+CLI output and optional diagnostic persistence also cover the new terminal codes.
+
+### Separate local operator surface
+
+`ReplayOperatorServer` is a separate loopback-only HTTP listener, default CLI port
+18082. It does not modify discovery's `/operator` controller. In an **external
+operator browser**, open `http://127.0.0.1:18082/replay-operator`, repair the existing
+headed automation window, then refresh the operator page and select **Resume replay**.
+Do not navigate the automation page to the operator URL: that is outside target
+policy. `GET /replay-operator/status` exposes only fixed ownership metadata.
+
+The server uses exact Host/Origin checks, POST-only resume, `no-store`, restrictive
+CSP and an HttpOnly/SameSite=Strict single-use cookie. The token is transport-only:
+it is not in HTML, hidden fields, status JSON, diagnostic JSON or CLI output.
+Stale, duplicate and wrong-epoch signals return 409; invalid origins return 403.
+Local processes are trusted; this is not a remote/multi-user authentication service.
+Do not log operator request/response headers, which necessarily transport the cookie.
+
+Trusted CLI configuration (off by default):
+
+- `REPLAY_SESSION_EXPIRY_NAME`: exact marker name; optional `REPLAY_SESSION_EXPIRY_ROLE`
+  is `ALERT` by default or `STATUS`. Omit the name to disable marker detection.
+- `REPLAY_HANDOFF=true`: enable the coordinator and local operator server. Requires
+  a configured marker and `REPLAY_HEADLESS=false`.
+- `REPLAY_HANDOFF_TIMEOUT_MS=60000`, `REPLAY_HANDOFF_LIMIT=2`,
+  `REPLAY_OPERATOR_PORT=18082`: host-controlled bounds and listener port.
+
+The production synthetic target does not inject expiry on its own. This gate's
+tests install a test-only marker and recovery control; it adds no live simulation
+command. No live demonstration was performed for this gate.
+
+### Exact offline verification
+
+```sh
+cd /Users/surabhimarathe/interfaceai-automation
+./gradlew test --tests '*ReplayHandoffIntegrationTest' --tests '*ReplayOperatorTest' --rerun-tasks
+./gradlew test --rerun-tasks
+git diff --check
+```
+
+Scripted operator tests use a separate test-only CDP attachment to the existing
+headed page, replace the old control during repair, and verify all seven exact
+outputs, unchanged browser/context/page identity and cookie delivery afterward.
+They cover stale/duplicate signals, both non-automation ownership states, timeout
+and count bounds, resume-time URL denial, non-semantic/duplicate markers, and
+post-dispatch timeout/submit/dialog/popup/request-denial exclusions. Operator and
+diagnostic redaction checks use temporary test data only, not repository evidence.
+
+Limitations: only the retained-control expiry shape above is supported, not arbitrary
+login/SSO redirects or missing/ambiguous controls. Human behavior is cooperative;
+the request guard still intercepts denied destinations during manual operation,
+but cannot undo already-dispatched work. No LLM, action retry, rollback, screenshot,
+DOM capture, artifact compilation or human-input recording is added. No reversal
+is submitted by replay or its operator tests.

@@ -24,8 +24,8 @@ class ReplayPresentationTest {
             for (var outcome : artifact.outcomes()) {
                 // Identifiers come from the validated artifact, never from visible page text.
                 var result = new ReplayResult(ReplayResult.Status.EXPECTED_OUTCOME,
-                        ReplayResult.Code.BUSINESS_OUTCOME, outcome.code(), 2, sensitive);
-                String expected = "ReplayResult[status=EXPECTED_OUTCOME, code=" + outcome.code()
+                        ReplayResult.Code.BUSINESS_OUTCOME, outcome.code(), 2, Map.of());
+                String expected = "ReplayResult[status=EXPECTED_OUTCOME, disposition=EXPECTED_OUTCOME, code=" + outcome.code()
                         + ", step=2, outputs=REDACTED]";
                 assertEquals(expected, result.toString());
                 var bytes = new ByteArrayOutputStream();

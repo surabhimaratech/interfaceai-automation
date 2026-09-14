@@ -6,7 +6,7 @@ import java.util.UUID;
 /** One local operator. HTTP threads signal only; the browser thread grants/reclaims ownership. */
 public final class HandoffCoordinator {
     public enum Owner { AUTOMATION, HUMAN, RESUMING, CLOSED }
-    public enum Reason { MODEL_REQUEST, SIMULATED_SESSION_EXPIRY, UNEXPECTED_ALERT, NO_PROGRESS }
+    public enum Reason { MODEL_REQUEST, SIMULATED_SESSION_EXPIRY, UNEXPECTED_ALERT, NO_PROGRESS, SESSION_EXPIRY }
     public record Status(Owner owner, Reason reason, int step, long epoch, int interactions) {}
     private Owner owner = Owner.AUTOMATION;
     private Reason reason;

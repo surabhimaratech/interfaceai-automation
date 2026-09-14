@@ -7,7 +7,11 @@ import java.util.Map;
 /** Trusted host configuration only. Artifacts can select an ID but cannot construct an origin or policy. */
 public final class TargetRegistry {
     private final Map<String, ActionPolicy> targets;
-    public TargetRegistry(Map<String, ActionPolicy> targets) {
+    private final Map<String, SessionExpiryMarker> expiryMarkers;
+    public TargetRegistry(Map<String, ActionPolicy> targets) { this(targets, Map.of()); }
+    public TargetRegistry(Map<String, ActionPolicy> targets, Map<String, SessionExpiryMarker> expiryMarkers) {
+        this.expiryMarkers = Map.copyOf(expiryMarkers);
+        if (!targets.keySet().containsAll(expiryMarkers.keySet())) throw new IllegalArgumentException("UNKNOWN_MARKER_TARGET");
         this.targets = Map.copyOf(targets);
         for (var e : this.targets.entrySet()) {
             URI origin;
@@ -22,4 +26,5 @@ public final class TargetRegistry {
         }
     }
     public ActionPolicy resolve(String targetId) { return targets.get(targetId); }
+    public SessionExpiryMarker expiryMarker(String targetId) { return expiryMarkers.get(targetId); }
 }
