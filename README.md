@@ -60,6 +60,8 @@ is documented in `evidence/README.md` under run UUID
 `dc55aa1d-d34c-4735-bc46-b36bbc64f4b0`. Day 3 gate 1 adds replay diagnostics,
 recoverability classification and opt-in privacy-safe diagnostic storage. Day 3
 gate 2 adds bounded, pre-action same-session human handoff during deterministic replay.
+Gate 3 adds explicit tenant-scoped target resolution and additive host-configured
+diagnostic redaction.
 Real authentication is not implemented; session expiry is an explicit UI
 simulation. Offline browser/client/replay tests are not live LLM evidence.
 
@@ -317,7 +319,8 @@ git diff --check
 `ReplayEngine.run(artifactJson, InvocationParameters)` validates the artifact,
 requires exactly the declared invocation keys, and accepts only Java `String`
 and `BigDecimal` values satisfying their contracts. It resolves `targetId` via a
-trusted `TargetRegistry` mapping to an `ActionPolicy`. Invalid artifacts/parameters,
+trusted tenant/target configuration (see Day 3 gate 3). The two-argument API
+requires an explicit single-tenant `TargetRegistry` adapter. Invalid artifacts/parameters,
 unknown targets and denied entry paths return before browser launch. Concrete
 origins never come from the artifact.
 
@@ -391,6 +394,7 @@ In a second terminal, invoke the hand-authored fixture without an API key:
 
 ```sh
 cd /Users/surabhimarathe/interfaceai-automation
+REPLAY_TENANT_ID=synthetic-local \
 REPLAY_ORIGIN=http://localhost:8080 \
 REPLAY_MEMBER_ID=100042 \
 REPLAY_AMOUNT=25.00 \
@@ -402,7 +406,8 @@ This opens headed Chromium, stops at verified review, closes the session and pri
 a redacted result. The CLI is a fee-review invocation adapter; Java callers can
 supply other typed contracts and trusted target registries. `replay.target-id`
 and the existing `discovery.allowed-*` properties configure the trusted target.
-`REPLAY_ORIGIN` is a host-side override, not artifact data. Optional environment
+`REPLAY_TENANT_ID` is required: the CLI explicitly binds a single tenant, with no
+default. `REPLAY_ORIGIN` is a host-side override, not artifact data. Optional environment
 settings are `REPLAY_HEADLESS=true`, `REPLAY_STEP_TIMEOUT_MS`, and
 `REPLAY_TIMEOUT_MS`. Do not source an API-key file for replay.
 
@@ -604,7 +609,7 @@ member ID override applies only to this command, leaving the caller's value unch
 
 ```sh
 export REPLAY_DIAGNOSTIC_DIRECTORY=/private/tmp/interfaceai-replay-diagnostics
-env -u OPENROUTER_API_KEY REPLAY_MEMBER_ID=999999 ./gradlew replay --args='src/test/resources/artifacts/prepare-fee-reversal-review.v1.json'
+env -u OPENROUTER_API_KEY REPLAY_TENANT_ID=synthetic-local REPLAY_MEMBER_ID=999999 ./gradlew replay --args='src/test/resources/artifacts/prepare-fee-reversal-review.v1.json'
 unset REPLAY_DIAGNOSTIC_DIRECTORY
 ```
 
@@ -737,3 +742,101 @@ the request guard still intercepts denied destinations during manual operation,
 but cannot undo already-dispatched work. No LLM, action retry, rollback, screenshot,
 DOM capture, artifact compilation or human-input recording is added. No reversal
 is submitted by replay or its operator tests.
+
+## Day 3 gate 3: tenant-scoped targets and diagnostic redaction
+
+Resolution is explicit and case-sensitive, with no default or cross-tenant fallback:
+
+```text
+caller TenantId + artifact logical targetId
+  -> exact trusted TenantTargetRegistry entry (before browser creation)
+  -> ActionPolicy + optional SessionExpiryMarker + DiagnosticRedactionPolicy
+  -> deterministic UI execution
+  -> baseline redaction + tenant suppression + host additions -> optional diagnostics
+```
+
+A tenant ID is 1–64 ASCII characters matching `[A-Za-z][A-Za-z0-9_-]{0,63}`.
+It is separate from invocation parameters and is not an authentication credential.
+The immutable registry owns each tenant's target map, concrete origin, allowed
+routes/actions/control names, marker and redaction policy. Artifacts retain only
+logical target ID and entry path; strict JSON rejects configuration injection.
+The existing shared action policy and request interception remain authoritative.
+
+Example trusted Java configuration (synthetic IDs; `policyA` and `policyB` are
+host-created `ActionPolicy` instances with distinct origins and explicit route
+and control allowlists):
+
+```java
+var tenantA = new TenantId("labTenantA");
+var tenantB = new TenantId("labTenantB");
+var registry = new TenantTargetRegistry(Map.of(
+    tenantA, Map.of("legacy-banking", new TenantTargetConfiguration(
+        policyA, null, new DiagnosticRedactionPolicy(
+            List.of("synthetic-secret"), List.of("CASE-[0-9]{1,8}")))),
+    tenantB, Map.of("legacy-banking", new TenantTargetConfiguration(
+        policyB, null, DiagnosticRedactionPolicy.baseline()))));
+var engine = new ReplayEngine(registry, options);
+var resultA = engine.run(tenantA, artifactJson, parameters);
+var resultB = engine.run(tenantB, artifactJson, parameters);
+```
+
+Markers can differ per tenant/target. The same artifact and typed parameters
+execute unchanged; redaction never rewrites execution values or typed outputs.
+Unknown tenants return `FAILED / UNKNOWN_TENANT`; missing targets within a known
+tenant return `FAILED / UNKNOWN_TENANT_TARGET`. Both are `HARD_FAILURE`, resolve
+before browser launch and support sanitized diagnostic persistence. Missing explicit
+tenant input fails closed as `INVALID_PARAMETERS`; invalid ID construction rejects
+with a fixed error.
+
+The CLI and older tests use the explicit compatibility adapter
+`TargetRegistry.singleTenant(new TenantId("synthetic-local"), policies, markers)`
+(the marker map is optional). Its two-argument replay API retains the legacy
+`UNKNOWN_TARGET` code. Native tenant-aware calls use the distinct codes above.
+The CLI requires `REPLAY_TENANT_ID`; it does not infer identity from inputs or the
+artifact. Custom redaction is configured through the trusted Java registry, not
+artifact fields or model output.
+
+### Additive diagnostic redaction
+
+The existing conservative baseline cannot be disabled. Host additions mask an
+entire matching diagnostic field, never restore baseline-blocked data. They apply
+to step IDs and expected artifact role/name/context strings; fixed enum roles and
+cardinality contain no observed data. All registered tenant identifiers are
+suppressed from diagnostic text. Result presentation and UUID diagnostic filenames
+contain no tenant metadata. Artifact outcome identifiers containing a registered
+tenant identifier are rejected rather than reflected in redacted result output.
+
+Policies defensively copy their configuration. At most 32 literal secrets and
+16 patterns are accepted; each must be nonblank, control-character-free and at
+most 160 characters. Literal matching is case-insensitive. Patterns use a small
+case-sensitive language, not general Java regex: printable ASCII literals,
+approved classes `[A-Z]`, `[a-z]`, `[0-9]`, `[A-Za-z]`, `[A-Za-z0-9]`,
+`[A-Z0-9]`, and optional `{n}` or `{min,max}` repetition (1–32). Regex
+metacharacters, alternation, lookaround, backreferences and unbounded repetition
+are rejected. Rules have at most 32 atoms and maximum expanded length 256.
+Matching uses bounded dynamic programming on at most 300 characters, without
+backtracking. Malformed/oversized configuration fails during host construction,
+before browser launch.
+
+### Offline verification and limitations
+
+```sh
+cd /Users/surabhimarathe/interfaceai-automation
+./gradlew test --tests '*TenantReplayIntegrationTest' --tests '*DiagnosticRedactionPolicyTest' --rerun-tasks
+./gradlew test --rerun-tasks
+git diff --check
+```
+
+Tests run two real local synthetic target servers, verify independent successful
+seven-output replays, origin/control/marker isolation, pre-launch failures,
+redaction-only behavior and sanitized persistence in temporary directories.
+These tests are not live model evidence and make no OpenRouter calls.
+
+Configuration is trusted and in-process: there is no remote policy service,
+authentication, authorization database or tenant administration UI. The caller
+must establish authorization upstream; supplying a tenant ID alone does not do
+that. Host administrators remain responsible for correct mappings and reviewed
+artifact vocabulary. Additive patterns are deliberately restrictive, not a
+general-purpose PII detector. Conservative tenant-name collisions can reject an
+outcome identifier or mask benign metadata. No automatic retry, rollback, new
+live evidence or reversal submission is introduced.

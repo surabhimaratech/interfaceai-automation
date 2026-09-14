@@ -60,7 +60,7 @@ public final class ScriptedCompilationScenario {
             if (result.code() != ActionResult.Code.CHECKPOINT_VERIFIED || compiled.artifact() == null)
                 return Map.of("compile", compiled.code().name(), "replay", "NOT_RUN");
         }
-        var replay = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking", policy)),
+        var replay = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking", policy)),
                 new ReplayOptions(Duration.ofSeconds(5), Duration.ofSeconds(25),true))
                 .run(new ArtifactJson().write(compiled.artifact()), new InvocationParameters(FeeReviewCapability.parameters(request)));
         return Map.of("compile", compiled.code().name(), "replay", replay.status().name());

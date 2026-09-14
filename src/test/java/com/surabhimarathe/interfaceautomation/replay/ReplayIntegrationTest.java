@@ -93,7 +93,7 @@ class ReplayIntegrationTest {
         env.withProperty("discovery.allowed-origin", "http://localhost:" + port);
         return DiscoveryPolicyConfiguration.from(env);
     }
-    ReplayEngine engine() throws Exception { return new ReplayEngine(new TargetRegistry(Map.of("legacy-banking", policy())), options); }
+    ReplayEngine engine() throws Exception { return new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking", policy())), options); }
     void failure(ReplayResult result, ReplayResult.Code code) {
         assertEquals(code == POLICY_DENIED ? BLOCKED : FAILED, result.status(), result.toString());
         assertEquals(code, result.code(), result.toString());
@@ -220,7 +220,7 @@ class ReplayIntegrationTest {
         clicks.add("Submit reversal");
         names.put(UiAction.Type.CLICK, clicks);
         var broad = new ActionPolicy(base.origin(), List.of(Pattern.compile("/legacy(?:/.*)?")), base.actions(), names);
-        ReplayEngine engine = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking", broad)), options);
+        ReplayEngine engine = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking", broad)), options);
         ReplayResult result = engine.run(artifact, parameters());
         failure(result, POLICY_DENIED);
         assertEquals(9, result.step());
@@ -235,7 +235,7 @@ class ReplayIntegrationTest {
 
     @Test void invalidArtifactParametersUnknownTargetAndEntryPolicyFailBeforeLaunch() throws Exception {
         AtomicInteger launches = new AtomicInteger();
-        ReplayEngine engine = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking", policy())), options,
+        ReplayEngine engine = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking", policy())), options,
                 (p, o) -> { launches.incrementAndGet(); throw new IllegalStateException("PRIVATE"); });
         failure(engine.run("{secret", parameters()), INVALID_ARTIFACT);
         for (Object amount : List.of("25.00", new BigDecimal("0"), new BigDecimal("100.01"), new BigDecimal("1.001"))) {
@@ -254,14 +254,14 @@ class ReplayIntegrationTest {
     }
 
     @Test void browserExceptionsAreRedacted() throws Exception {
-        var engine = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking", policy())), options,
+        var engine = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking", policy())), options,
                 (p,o) -> { throw new IllegalStateException("PRIVATE https://data/100042"); });
         failure(engine.run(fixture(), parameters()), BROWSER_FAILURE);
     }
 
     @Test void perStepAndOverallDeadlinesAreBounded() throws Exception {
         delayEntry = 1200;
-        var registry = new TargetRegistry(Map.of("legacy-banking", policy()));
+        var registry = TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking", policy()));
         var stepBound = new ReplayEngine(registry, new ReplayOptions(Duration.ofMillis(150), Duration.ofSeconds(10), true));
         var slow = stepBound.run(fixture(), parameters());
         failure(slow, TIMEOUT);
@@ -303,7 +303,7 @@ class ReplayIntegrationTest {
 
     @Test void slowReviewIsRecoverableButDoesNotRetryTheClick() throws Exception {
         delayReview = 1500;
-        var bounded = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking",policy())),
+        var bounded = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking",policy())),
                 new ReplayOptions(Duration.ofMillis(700),Duration.ofSeconds(20),true));
         var result = bounded.run(fixture(),parameters());
         failure(result,TIMEOUT);
@@ -343,7 +343,7 @@ class ReplayIntegrationTest {
 
     @Test void diagnosticStoreIsOptInAndSuccessWritesNothing() throws Exception {
         Path directory = temp.resolve("success-diagnostics");
-        var storedEngine = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking",policy())),options,new DiagnosticStore(directory));
+        var storedEngine = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking",policy())),options,new DiagnosticStore(directory));
         var success = storedEngine.run(fixture(),parameters());
         assertEquals(SUCCEEDED,success.status());
         assertEquals(ReplayResult.DiagnosticPersistence.NOT_APPLICABLE,success.diagnosticPersistence());
@@ -358,7 +358,7 @@ class ReplayIntegrationTest {
         Path directory = temp.resolve("diagnostics");
         UUID id = UUID.randomUUID();
         var store = new DiagnosticStore(directory,() -> id);
-        var storedEngine = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking",policy())),options,store);
+        var storedEngine = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking",policy())),options,store);
         String artifact = changed(n -> at(n,"/steps/3/locator").putNull("context"));
         var first = storedEngine.run(artifact,parameters());
         failure(first,AMBIGUOUS_LOCATOR);
@@ -423,7 +423,7 @@ class ReplayIntegrationTest {
     @Test void persistenceFailureCannotChangeReplayClassificationOrLeakPath() throws Exception {
         Path notDirectory = temp.resolve("PRIVATE_PATH");
         Files.writeString(notDirectory,"original");
-        var storedEngine = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking",policy())),options,new DiagnosticStore(notDirectory));
+        var storedEngine = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking",policy())),options,new DiagnosticStore(notDirectory));
         var result = storedEngine.run(changed(n -> at(n,"/steps/3/locator").putNull("context")),parameters());
         failure(result,AMBIGUOUS_LOCATOR);
         assertEquals(ReplayResult.DiagnosticPersistence.FAILED,result.diagnosticPersistence());
@@ -495,7 +495,9 @@ class ReplayIntegrationTest {
             }
         }) {
             Class<?> registryType = isolated.loadClass(TargetRegistry.class.getName());
-            Object registry = registryType.getConstructor(Map.class).newInstance(Map.of("legacy-banking", policy()));
+            Class<?> tenantType = isolated.loadClass(TenantId.class.getName());
+            Object tenant = tenantType.getConstructor(String.class).newInstance("synthetic-local");
+            Object registry = registryType.getMethod("singleTenant",tenantType,Map.class).invoke(null,tenant,Map.of("legacy-banking", policy()));
             Class<?> optionsType = isolated.loadClass(ReplayOptions.class.getName());
             Object config = optionsType.getConstructor(Duration.class, Duration.class, boolean.class)
                     .newInstance(Duration.ofSeconds(5), Duration.ofSeconds(25), true);

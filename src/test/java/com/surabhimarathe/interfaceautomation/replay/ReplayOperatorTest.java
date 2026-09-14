@@ -79,7 +79,7 @@ class ReplayOperatorTest {
         for (String name : new String[]{""," ","A".repeat(161),"SESSION\nEXPIRED","${inputs.reason}"})
             assertThrows(IllegalArgumentException.class,() -> new SessionExpiryMarker(LocatorSpec.Role.ALERT,name));
         assertThrows(IllegalArgumentException.class,() -> new SessionExpiryMarker(LocatorSpec.Role.BUTTON,"Expired"));
-        assertThrows(IllegalArgumentException.class,() -> new TargetRegistry(Map.of(),Map.of("unknown",
+        assertThrows(IllegalArgumentException.class,() -> TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of(),Map.of("unknown",
                 new SessionExpiryMarker(LocatorSpec.Role.ALERT,"Expired"))));
         assertThrows(IllegalArgumentException.class,() -> new ReplayHandoff(Duration.ZERO,1));
         assertThrows(IllegalArgumentException.class,() -> new ReplayHandoff(Duration.ofMinutes(6),1));
@@ -91,7 +91,7 @@ class ReplayOperatorTest {
     @Test void headlessHandoffIsRejectedBeforeBrowserLaunch() throws Exception {
         var launches = new AtomicInteger();
         try (var handoff = new ReplayHandoff(Duration.ofSeconds(1),1)) {
-            var engine = new ReplayEngine(new TargetRegistry(Map.of()),
+            var engine = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of()),
                     new ReplayOptions(Duration.ofSeconds(1),Duration.ofSeconds(3),true),
                     (p,o) -> { launches.incrementAndGet(); throw new IllegalStateException("PRIVATE"); },null,handoff);
             var result = engine.run("{}",new InvocationParameters(Map.of()));

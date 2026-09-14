@@ -18,7 +18,7 @@ public record ReplayResult(Status status, Code code, String outcomeCode, int ste
     }
     public enum Status { SUCCEEDED, EXPECTED_OUTCOME, BLOCKED, FAILED }
     public enum Code { CHECKPOINT_VERIFIED, BUSINESS_OUTCOME, POLICY_DENIED, INVALID_ARTIFACT,
-        INVALID_PARAMETERS, UNKNOWN_TARGET, ZERO_LOCATOR, AMBIGUOUS_LOCATOR, POSTCONDITION_FAILED,
+        INVALID_PARAMETERS, UNKNOWN_TARGET, UNKNOWN_TENANT, UNKNOWN_TENANT_TARGET, ZERO_LOCATOR, AMBIGUOUS_LOCATOR, POSTCONDITION_FAILED,
         CHECKPOINT_FAILED, EXTRACTION_FAILED, TIMEOUT, UNEXPECTED_DIALOG, INTERRUPTED, BROWSER_FAILURE,
         HUMAN_ACTION_REQUIRED, HANDOFF_TIMEOUT, HANDOFF_LIMIT, OWNERSHIP_DENIED }
     public ReplayResult {
@@ -58,7 +58,7 @@ public record ReplayResult(Status status, Code code, String outcomeCode, int ste
         diagnostics.step(step, null);
         diagnostics.phase(switch (code) {
             case INVALID_PARAMETERS -> ReplayDiagnostic.Phase.PARAMETERS;
-            case UNKNOWN_TARGET, POLICY_DENIED -> ReplayDiagnostic.Phase.TARGET_RESOLUTION;
+            case UNKNOWN_TARGET, UNKNOWN_TENANT, UNKNOWN_TENANT_TARGET, POLICY_DENIED -> ReplayDiagnostic.Phase.TARGET_RESOLUTION;
             default -> ReplayDiagnostic.Phase.VALIDATION;
         });
         return new ReplayResult(code == Code.POLICY_DENIED ? Status.BLOCKED : Status.FAILED, code, null, step, Map.of())

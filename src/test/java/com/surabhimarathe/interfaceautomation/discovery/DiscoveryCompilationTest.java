@@ -92,7 +92,7 @@ class DiscoveryCompilationTest {
             assertFalse(Files.readString(f.log()).contains(secret),"Test log must exclude sensitive material");
         }
         assertFalse(Files.exists(f.output()));
-        var replay = new ReplayEngine(new TargetRegistry(Map.of("legacy-banking",ScriptedCompilationScenario.policy(origin()))),
+        var replay = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking",ScriptedCompilationScenario.policy(origin()))),
                 new ReplayOptions(Duration.ofSeconds(5),Duration.ofSeconds(25),true))
                 .run(json,new InvocationParameters(FeeReviewCapability.parameters(request())));
         assertEquals(ReplayResult.Status.SUCCEEDED,replay.status(),replay.toString());

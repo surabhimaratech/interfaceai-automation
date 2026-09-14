@@ -3,6 +3,7 @@ package com.surabhimarathe.interfaceautomation.replay;
 import com.microsoft.playwright.*;
 import com.surabhimarathe.interfaceautomation.artifact.*;
 import java.util.Map;
+import java.util.Locale;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 import static com.surabhimarathe.interfaceautomation.replay.ReplayResult.Code.*;
@@ -12,7 +13,8 @@ public final class ReplayEngine {
     @FunctionalInterface interface BrowserLauncher {
         Browser launch(Playwright playwright, BrowserType.LaunchOptions options);
     }
-    private final TargetRegistry targets;
+    private final TenantTargetRegistry targets;
+    private final TenantId compatibilityTenant;
     private final ReplayOptions options;
     private final BrowserLauncher launcher;
     private final DiagnosticStore diagnosticStore;
@@ -33,6 +35,20 @@ public final class ReplayEngine {
         this(targets, options, launcher, store, null);
     }
     ReplayEngine(TargetRegistry targets, ReplayOptions options, BrowserLauncher launcher, DiagnosticStore store, ReplayHandoff handoff) {
+        this(targets.registry(), options, launcher, store, handoff, targets.tenant());
+    }
+    public ReplayEngine(TenantTargetRegistry targets, ReplayOptions options) {
+        this(targets,options,null,null);
+    }
+    public ReplayEngine(TenantTargetRegistry targets, ReplayOptions options, DiagnosticStore store, ReplayHandoff handoff) {
+        this(targets,options,(p,o) -> p.chromium().launch(o),store,handoff,null);
+    }
+    ReplayEngine(TenantTargetRegistry targets, ReplayOptions options, BrowserLauncher launcher, DiagnosticStore store, ReplayHandoff handoff) {
+        this(targets,options,launcher,store,handoff,null);
+    }
+    private ReplayEngine(TenantTargetRegistry targets, ReplayOptions options, BrowserLauncher launcher,
+                         DiagnosticStore store, ReplayHandoff handoff, TenantId compatibilityTenant) {
+        this.compatibilityTenant = compatibilityTenant;
         this.handoff = handoff;
         this.diagnosticStore = store;
         this.targets = targets;
@@ -40,16 +56,23 @@ public final class ReplayEngine {
         this.launcher = launcher;
     }
 
+    /** Available only when construction used the explicit single-tenant adapter. */
     public ReplayResult run(String artifactJson, InvocationParameters invocation) {
+        return runScoped(compatibilityTenant, artifactJson, invocation, true);
+    }
+    public ReplayResult run(TenantId tenant, String artifactJson, InvocationParameters invocation) {
+        return runScoped(tenant, artifactJson, invocation, false);
+    }
+    private ReplayResult runScoped(TenantId tenant, String artifactJson, InvocationParameters invocation, boolean compatibility) {
         if (handoff != null && !handoff.claim()) return ReplayResult.failure(INVALID_PARAMETERS,0);
         ReplayResult result;
-        try { result = execute(artifactJson, invocation); }
+        try { result = execute(tenant, artifactJson, invocation, compatibility); }
         finally { if (handoff != null) handoff.close(); }
         if (result.status() != ReplayResult.Status.SUCCEEDED && result.diagnostic() == null) {
             var diagnostics = new ReplayDiagnostics(Map.of());
             diagnostics.phase(switch (result.code()) {
                 case INVALID_PARAMETERS -> ReplayDiagnostic.Phase.PARAMETERS;
-                case UNKNOWN_TARGET, POLICY_DENIED -> ReplayDiagnostic.Phase.TARGET_RESOLUTION;
+                case UNKNOWN_TARGET, UNKNOWN_TENANT, UNKNOWN_TENANT_TARGET, POLICY_DENIED -> ReplayDiagnostic.Phase.TARGET_RESOLUTION;
                 default -> ReplayDiagnostic.Phase.VALIDATION;
             });
             result = result.withDiagnostic(diagnostics.snapshot(result.code()));
@@ -66,12 +89,21 @@ public final class ReplayEngine {
         }
     }
 
-    private ReplayResult execute(String artifactJson, InvocationParameters invocation) {
+    private ReplayResult execute(TenantId tenant, String artifactJson, InvocationParameters invocation, boolean compatibility) {
         long deadline = System.nanoTime() + options.overallTimeout().toNanos();
+        if (tenant == null) return ReplayResult.failure(INVALID_PARAMETERS,0);
+        if (!targets.containsTenant(tenant)) return ReplayResult.failure(UNKNOWN_TENANT,0);
         if (handoff != null && options.headless()) return ReplayResult.failure(INVALID_PARAMETERS,0);
         CapabilityArtifact artifact;
         try { artifact = new ArtifactJson().read(artifactJson); }
         catch (RuntimeException ex) { return ReplayResult.failure(INVALID_ARTIFACT, 0); }
+        // Dynamic outcome identifiers are printable: do not allow them to echo configured tenant IDs.
+        if (artifact.outcomes().stream().anyMatch(o -> targets.diagnosticSecrets().stream()
+                .anyMatch(id -> o.code().toLowerCase(Locale.ROOT).contains(id.toLowerCase(Locale.ROOT)))))
+            return ReplayResult.failure(INVALID_ARTIFACT,0);
+        var configuration = targets.resolve(tenant, artifact.target().targetId());
+        if (configuration == null) return ReplayResult.failure(compatibility && compatibilityTenant != null
+                ? UNKNOWN_TARGET : UNKNOWN_TENANT_TARGET,0);
         Map<String, Object> inputs;
         try {
             if (invocation == null || invocation.values() == null
@@ -82,13 +114,12 @@ public final class ReplayEngine {
                 if (!ContractValues.valid(e.getValue().type(), e.getValue().constraints(), inputs.get(e.getKey())))
                     return ReplayResult.failure(INVALID_PARAMETERS, 0);
         } catch (RuntimeException ex) { return ReplayResult.failure(INVALID_PARAMETERS, 0); }
-        var policy = targets.resolve(artifact.target().targetId());
-        if (policy == null) return ReplayResult.failure(UNKNOWN_TARGET, 0);
+        var policy = configuration.policy();
         String entry = policy.origin() + artifact.target().entryPath();
         if (!policy.allowsUrl(entry)) return ReplayResult.failure(POLICY_DENIED, 0);
         if (System.nanoTime() >= deadline) return ReplayResult.failure(TIMEOUT, 0);
         AtomicInteger step = new AtomicInteger();
-        ReplayDiagnostics diagnostics = new ReplayDiagnostics(inputs);
+        ReplayDiagnostics diagnostics = new ReplayDiagnostics(inputs, configuration.redactionPolicy(), targets.diagnosticSecrets());
         diagnostics.phase(ReplayDiagnostic.Phase.LAUNCH);
         // All Playwright operations and cleanup stay on this single owner thread.
         ExecutorService owner = Executors.newSingleThreadExecutor(r -> {
@@ -98,7 +129,7 @@ public final class ReplayEngine {
         });
         Future<ReplayResult> pending = owner.submit(() ->
                 new ReplayExecution(artifact, inputs, policy, options, launcher, deadline, step, diagnostics,
-                        targets.expiryMarker(artifact.target().targetId()), handoff).run(entry));
+                        configuration.expiryMarker(), handoff).run(entry));
         try {
             return pending.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
         } catch (TimeoutException ex) {

@@ -84,7 +84,7 @@ class ReplayHandoffIntegrationTest {
     }
     InvocationParameters parameters() { return new InvocationParameters(FeeReviewCapability.parameters(ScriptedCompilationScenario.request())); }
     TargetRegistry registry(boolean configured) throws Exception {
-        return new TargetRegistry(Map.of("legacy-banking",ScriptedCompilationScenario.policy(origin())),
+        return TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking",ScriptedCompilationScenario.policy(origin())),
                 configured ? Map.of("legacy-banking",new SessionExpiryMarker(LocatorSpec.Role.ALERT,"SESSION_EXPIRED")) : Map.of());
     }
     ReplayOptions options() { return new ReplayOptions(Duration.ofSeconds(3),Duration.ofSeconds(25),false); }

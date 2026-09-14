@@ -7,6 +7,8 @@ import static com.surabhimarathe.interfaceautomation.replay.ReplayDiagnostic.*;
 /** One run's synchronized, sanitized snapshot, also readable by the overall-deadline caller. */
 final class ReplayDiagnostics {
     private final List<String> secrets;
+    private final DiagnosticRedactionPolicy redaction;
+    private final List<String> tenantIds;
     private int step;
     private String stepId;
     private Phase phase = Phase.VALIDATION;
@@ -15,7 +17,10 @@ final class ReplayDiagnostics {
     private boolean actionStarted, requestDenied, policyDenied, dialog, popup, expiry, handingOff;
     private int handoffs;
 
-    ReplayDiagnostics(Map<String, Object> inputs) {
+    ReplayDiagnostics(Map<String, Object> inputs) { this(inputs,DiagnosticRedactionPolicy.baseline(),List.of()); }
+    ReplayDiagnostics(Map<String, Object> inputs, DiagnosticRedactionPolicy redaction, List<String> tenantIds) {
+        this.redaction = Objects.requireNonNull(redaction);
+        this.tenantIds = List.copyOf(tenantIds);
         secrets = inputs.values().stream().filter(Objects::nonNull).map(Object::toString).filter(s -> !s.isBlank()).toList();
     }
     synchronized void step(int number, String id) {
@@ -66,16 +71,23 @@ final class ReplayDiagnostics {
         if (value == null) return null;
         // Validated step identifiers may contain digits; invocation values still cannot escape.
         return value.length() <= 80 && value.matches("[A-Za-z][A-Za-z0-9_-]*")
-                && secrets.stream().noneMatch(value::contains) ? value : "[REDACTED]";
+                && secrets.stream().noneMatch(s -> value.toLowerCase(Locale.ROOT).contains(s.toLowerCase(Locale.ROOT)))
+                ? additional(value) : "[REDACTED]";
     }
     private String safe(String value) {
         if (value == null) return null;
         // Preserve whole input expressions without ever substituting values.
-        if (value.matches("\\$\\{inputs\\.[A-Za-z][A-Za-z0-9_]*}")) return value;
+        if (value.matches("\\$\\{inputs\\.[A-Za-z][A-Za-z0-9_]*}")) return additional(value);
         if (value.length() > 300 || value.chars().anyMatch(Character::isISOControl)
                 || value.matches("(?is).*(https?://|www\\.|@|\\d|<|>|sk-|bearer|token|secret|password).*")
                 || secrets.stream().anyMatch(s -> value.toLowerCase(Locale.ROOT).contains(s.toLowerCase(Locale.ROOT))))
             return "[REDACTED]";
-        return value;
+        return additional(value);
+    }
+    private String additional(String value) {
+        // Tenant identifiers are always suppressed, independent of the selected tenant's additions.
+        String lower = value.toLowerCase(Locale.ROOT);
+        if (tenantIds.stream().anyMatch(id -> lower.contains(id.toLowerCase(Locale.ROOT)))) return "[REDACTED]";
+        return redaction.apply(value);
     }
 }

@@ -35,7 +35,8 @@ public final class ReplayCli {
             var markers = expiryName == null ? Map.<String,SessionExpiryMarker>of() : Map.of(targetId,
                     new SessionExpiryMarker(com.surabhimarathe.interfaceautomation.artifact.LocatorSpec.Role.valueOf(
                             System.getenv().getOrDefault("REPLAY_SESSION_EXPIRY_ROLE","ALERT")),expiryName));
-            var targets = new TargetRegistry(Map.of(targetId, DiscoveryPolicyConfiguration.from(env)),markers);
+            var targets = TargetRegistry.singleTenant(new TenantId(System.getenv("REPLAY_TENANT_ID")),
+                    Map.of(targetId, DiscoveryPolicyConfiguration.from(env)),markers);
             var options = new ReplayOptions(Duration.ofMillis(Long.parseLong(System.getenv().getOrDefault("REPLAY_STEP_TIMEOUT_MS", "5000"))),
                     Duration.ofMillis(Long.parseLong(System.getenv().getOrDefault("REPLAY_TIMEOUT_MS", "60000"))),
                     Boolean.parseBoolean(System.getenv().getOrDefault("REPLAY_HEADLESS", "false")));
