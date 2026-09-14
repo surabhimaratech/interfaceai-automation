@@ -94,3 +94,48 @@ UUID correlation links the discovery log, artifact provenance and replay filenam
 it is evidence linkage, not cryptographic attestation. The redacted replay result
 does not itself attest to the process environment or artifact bytes, and no raw
 provider transcript or receipt is retained.
+
+## Day 4 gate 1: exceptional replay — declared member-not-found outcome
+
+On 2026-09-14 Pacific / UTC, repository revision
+`9fc4ce25b5a5da8508a6846487277f66682c16cc` replayed the exact existing artifact
+`artifacts/capability-dc55aa1d-d34c-4735-bc46-b36bbc64f4b0.json` against a
+separately started local synthetic target. Its original discovery/compilation
+run UUID is `dc55aa1d-d34c-4735-bc46-b36bbc64f4b0`; provenance is `COMPILED_TRACE`.
+The artifact SHA-256 was
+`3ef4049d0fc2346c564fd6b97bb86b5824fd616b127a3fe855e3c50c42587f59`.
+
+The target started with both discovery flow and one-action proof disabled.
+The replay used an explicit synthetic tenant, a deliberately missing member,
+headless Chromium, and a fresh temporary diagnostic directory. Invocation values
+and tenant identity are intentionally omitted here. The provider API key was
+explicitly removed from both process environments; no LLM was available to replay,
+and no OpenRouter call was made. This was actual deterministic UI execution,
+not a scripted-decision test or newly generated discovery evidence.
+
+- `exceptional-replay-member-not-found-47aeef5c-2d01-4a83-ad1c-c373b094bfc6.txt`
+  preserves the authentic quiet CLI output:
+  `status=EXPECTED_OUTCOME, disposition=EXPECTED_OUTCOME, code=MEMBER_NOT_FOUND,
+  step=2, diagnostics=STORED, outputs=REDACTED`.
+- `exceptional-replay-member-not-found-47aeef5c-2d01-4a83-ad1c-c373b094bfc6.diagnostic.json`
+  is a byte-for-byte copy of the sole diagnostic JSON created in that fresh
+  directory. Its UUID identifies the diagnostic, not a new discovery run.
+
+`MEMBER_NOT_FOUND` is a declared expected business outcome, not a technical
+failure. Replay stopped immediately after Search at step 2, before account
+navigation or reversal preparation. No reversal was submitted. The diagnostic's
+internal fixed code is `BUSINESS_OUTCOME`; the CLI exposes the validated artifact
+outcome identifier above. The predefined artifact expectation “Member not found”
+is retained as diagnostic metadata, not captured page text. No observed page/HTML
+content, customer values, inputs, outputs, tenant identity, URLs, cookies, tokens,
+selectors, exception details or key values are recorded.
+
+Before preservation, the diagnostic was checked against the trusted artifact
+expectation and a fixed metadata allowlist, and scanned for invocation values,
+synthetic customer data, tenant identity, credential markers and available local
+provider-key values. The exact CLI output was also checked before preservation.
+These checks are bounded redaction checks, not a general proof that every possible
+secret can be detected. The redacted files do not independently attest to process
+environment, absence of network calls or browser actions. UUID linkage and the
+artifact digest aid correlation; neither is cryptographic attestation of the run.
+Earlier evidence and the compiled artifact were not modified.

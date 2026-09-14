@@ -1,0 +1,35 @@
+{
+  "code" : "BUSINESS_OUTCOME",
+  "step" : 2,
+  "stepId" : "step-2",
+  "phase" : "OUTCOME",
+  "expected" : {
+    "role" : "STATUS",
+    "name" : "Member not found",
+    "nameMatch" : "EXACT",
+    "context" : null,
+    "cardinality" : "EXACT_ONE"
+  },
+  "matches" : {
+    "visible" : 1,
+    "zero" : false,
+    "ambiguous" : false,
+    "capped" : false
+  },
+  "conditions" : {
+    "actionStarted" : true,
+    "requestDenied" : false,
+    "policyDenied" : false,
+    "unexpectedDialog" : false,
+    "unexpectedPage" : false,
+    "timedOut" : false,
+    "postconditionFailed" : false,
+    "checkpointFailed" : false,
+    "outcomeDetected" : true,
+    "sessionExpiryDetected" : false,
+    "handoffCount" : 0,
+    "humanActionRequired" : false,
+    "handoffTimedOut" : false,
+    "handoffLimitReached" : false
+  }
+}
