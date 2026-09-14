@@ -7,7 +7,6 @@ import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.regex.Pattern;
 
 /** Opt-in one-action proof, deliberately not a full discovery loop or replay engine. */
 @Component
@@ -19,11 +18,7 @@ public final class DiscoveryProof implements ApplicationRunner {
         // Fail before opening a browser or creating evidence if credentials are absent.
         var client = new OpenRouterClient(System.getenv("OPENROUTER_API_KEY"));
         String origin = env.getRequiredProperty("discovery.allowed-origin");
-        var routes = Arrays.stream(env.getRequiredProperty("discovery.allowed-routes").split(",")).map(Pattern::compile).toList();
-        var actions = new HashSet<UiAction.Type>();
-        for (String action : env.getRequiredProperty("discovery.allowed-actions").split(","))
-            actions.add(UiAction.Type.valueOf(action.trim()));
-        var policy = new ActionPolicy(origin, routes, actions);
+        var policy = DiscoveryPolicyConfiguration.from(env);
         var events = new SafeEvents(Path.of(env.getProperty("discovery.evidence",
             "evidence/action-" + UUID.randomUUID() + ".jsonl")));
         RunState state = RunState.CREATED;

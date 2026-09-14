@@ -52,9 +52,11 @@ test uses visible UI controls.
 ## Current scope
 
 The target, one-action proof, and bounded discovery loop are implemented.
-Minimal same-session human takeover is also implemented. Capability artifacts,
-replay and real authentication are not implemented. Session expiry is an explicit
-UI simulation. Offline browser/client tests are not live LLM evidence.
+Minimal same-session human takeover is also implemented. Day 2 includes the
+versioned artifact model and isolated compiler seam (gate 1), plus deterministic
+artifact replay (gate 2). Discovery-to-artifact compilation is not integrated.
+Real authentication is not implemented; session expiry is an explicit UI
+simulation. Offline browser/client/replay tests are not live LLM evidence.
 
 ## One live model action
 
@@ -206,3 +208,205 @@ page data are captured. The count is a local audit signal, not identity proof.
 same-page integration tests. The integration test uses a second CDP client as a
 **simulated** operator and pumps browser events like the real runner. It is not
 presented as a real human demonstration. CDP is enabled only in that test.
+
+## Day 2 gate 1: capability artifact schema
+
+The `artifact` Java package defines immutable records and the supported JSON
+boundary, `ArtifactJson.read/write`. `schemaVersion: 1` selects the wire format;
+positive `artifactVersion` independently versions a capability definition. The
+hand-authored example is
+`src/test/resources/artifacts/prepare-fee-reversal-review.v1.json`. It is a schema
+fixture, **not authentic discovery evidence**; nothing was added to `evidence/`.
+
+- Capability metadata includes a required display name (max 160 characters),
+  description (max 1000), and structured `executionBoundary: {"mode":"REVIEW_ONLY"}`.
+  Every input/output requires a description (max 500). Missing, blank, oversized
+  or control-character-bearing metadata is rejected.
+- `TargetSpec` contains only a logical `targetId` (max 80, letters/digits/underscore/
+  hyphen, starting with a letter) and bounded entry path. Concrete origins and
+  URL overrides are not accepted fields. The eventual executor must receive or
+  resolve the origin through trusted runtime policy; the artifact cannot supply it.
+  Named inputs are required, with no defaults.
+  `STRING` contracts require min/max length (max 1000); `DECIMAL` contracts require
+  inclusive min/max and maxScale (0–8). Inapplicable constraints are rejected.
+- `StepSpec` supports only `FILL` and `CLICK`, with a required postcondition.
+  Fill values must be whole expressions matching
+  `\$\{inputs\.([A-Za-z][A-Za-z0-9_]*)\}`: for example `${inputs.amount}`.
+  No literals, interpolation, evaluation, nested paths or implicit input creation.
+- `LocatorSpec` has a semantic role, accessible name, name match mode and mandatory
+  `EXACT_ONE` cardinality. Action names match exactly. Optional context selects the
+  nearest row/form/fieldset whose text contains the supplied literal. Name/context
+  can instead be a whole STRING input expression. Names are bounded to 160
+  characters and contexts to 300, including the declared bound after substitution;
+  control characters are rejected. No CSS/XPath, control IDs or browser handles.
+- `PREFIX` name matching is limited to rows, for labels followed by dynamic values.
+  The review checkpoint requires a heading marker and one extractor per output.
+  `ROW_VALUE` means the single data cell of the unique matched row (multiple cells
+  must fail); `TEXT` reads semantic target text. `TEXT` and `USD_DECIMAL` formats
+  declare string or dollar-decimal output respectively. Optional expected-input
+  expressions require the same contract type. These are declarations, not an
+  implemented extractor or replay engine. Outcomes must be non-empty, have unique
+  codes, and declare visible named status/alert conditions. The fixture declares
+  `MEMBER_NOT_FOUND` (status named “Member not found”) and `VALIDATION_REJECTED`
+  (alert named “VALIDATION_REJECTED”). The target supplies accessible names via
+  `aria-labelledby`. Browser tests verify each branch is mutually distinct and
+  absent at review success; neither error branch has the review checkpoint.
+- `ArtifactValidator` fails on the first error with a structured `ValidationCode`
+  and a schema path only. Unsupported schema versions, duplicate step IDs,
+  unresolved references, invalid expressions/constraints/action structures, missing
+  checkpoint/extractors and unbounded text all fail closed. JSON also rejects
+  unknown fields/enums, duplicate keys, coercion, trailing content and oversized
+  documents. Error messages never echo rejected values or parser excerpts.
+
+Artifact validation is application-neutral: it checks supported action structure,
+semantic locators, exact-one cardinality, references, postconditions and the
+`REVIEW_ONLY` declaration, not a list of application labels. An unfamiliar benign
+label such as “Preview request” can be structurally valid. Structural validity
+does not authorize even a known label, and the boundary is intent, not proof of
+an element's effects. Runtime `ActionPolicy` remains authoritative for origin,
+routes, action types, actual destinations and control names.
+
+Runtime control permissions are constructor-supplied per action type and loaded
+for both discovery modes from `discovery.allowed-fill-controls` and
+`discovery.allowed-click-controls` in `application.properties` (comma-separated,
+exact names). Missing control configuration denies all controls of that type.
+These application defaults exist only in runtime configuration, not in the
+artifact validator. Even configured names cannot authorize a submit destination:
+the URL policy rejects submit path segments, encoded paths and origin/route
+escapes. The existing target's review POST remains permitted; its final submit
+POST remains blocked. Gate 1 supplies declarations only; gate 2 below implements
+runtime target resolution, policy-checked execution and verification. Neither
+gate grants permissions based on artifact labels or integrates live compilation.
+
+`DiscoveryTrace.recordSuccessful` accepts only executed FILL/CLICK actions with
+matching successful result codes and explicit semantic descriptors supplied by
+the caller. Runtime IDs/observations are not retained. Fill values stay in memory;
+the trace is not a persistence DTO and has redacted `toString` output.
+`ArtifactCompiler.compile(draft, trace, parameters)` consumes a draft with empty
+steps, propagates metadata, logical target, boundary and outcomes, produces ordered
+steps, and validates the complete artifact. The caller
+must supply descriptors tied to the executed observations; this isolated seam
+does not infer them from runtime IDs, integrate with the runner, or authenticate
+a trace. Provenance stores only a source enum and random trace UUID, not transcripts.
+
+Parameter binding uses exact whole-string equality. The sole canonicalization is
+plain-decimal numeric equality (`25.00` can bind a BigDecimal `25`); exponent,
+currency, grouping and whitespace forms are not normalized. Unknown literal fill
+values and ambiguous matches are rejected. The compiler rejects durable text
+(including new descriptions) containing supplied parameter/fill values rather
+than doing substring replacement.
+This deliberately conservative check may reject coincidental matches. Contract
+bounds are author-supplied schema metadata, never inferred from discovery values.
+
+Run the focused offline gate or the complete suite (no OpenRouter calls):
+
+```sh
+./gradlew test --tests '*artifact.ArtifactTest'
+./gradlew test --rerun-tasks
+git diff --check
+```
+
+## Day 2 gate 2: deterministic artifact replay
+
+`ReplayEngine.run(artifactJson, InvocationParameters)` validates the artifact,
+requires exactly the declared invocation keys, and accepts only Java `String`
+and `BigDecimal` values satisfying their contracts. It resolves `targetId` via a
+trusted `TargetRegistry` mapping to an `ActionPolicy`. Invalid artifacts/parameters,
+unknown targets and denied entry paths return before browser launch. Concrete
+origins never come from the artifact.
+
+Each invocation owns one Chromium session on one thread. Discovery and replay
+share `BrowserPolicyGuard` for request interception and last-moment authorization
+through the existing `ActionPolicy`. Every action checks the actual current URL,
+control name and link/form destination, then operates on that same element handle.
+Service workers are blocked; unexpected dialogs/popups fail closed. Denied
+script-initiated requests also stop replay. The existing stylesheet exception is
+shared, not a separate replay policy.
+
+Role/name locators use exact or literal-prefix accessible-name matching and
+visible exact-one cardinality. Row/form/fieldset context applies to the nearest
+matching ancestor's whitespace-normalized text (bounded to 2000 characters).
+Whole `${inputs.name}` expressions are resolved without interpolation, evaluation
+or fuzzy matching. Declared outcomes are checked before every step and immediately
+after each action, before success postconditions. An outcome also takes precedence
+when a step lookup or success check fails. Multiple simultaneously matching outcome
+conditions fail as ambiguous, rather than choosing an arbitrary branch.
+
+All step postconditions must pass. Completion checks the heading checkpoint,
+extracts every output, validates its type/constraints and any expected-input
+binding, then rechecks outcomes/checkpoint. `ROW_VALUE` requires exactly one
+direct visible data cell. `TEXT` preserves rendered text, without trimming.
+`USD_DECIMAL` accepts only an ASCII dollar sign, optional minus, ungrouped integer
+and exactly two fractional digits (for example `$1842.73`), producing `BigDecimal`.
+Grouping, exponent notation, surrounding whitespace and locale coercion are rejected.
+
+The typed `ReplayResult` returns:
+
+- `SUCCEEDED / CHECKPOINT_VERIFIED`, with the declared typed output map.
+- `EXPECTED_OUTCOME`, with the artifact's `outcomeCode`; the built-in code is
+  `BUSINESS_OUTCOME`, and `effectiveCode()` returns the declared business code.
+- `BLOCKED / POLICY_DENIED`.
+- `FAILED` with `INVALID_ARTIFACT`, `INVALID_PARAMETERS`, `UNKNOWN_TARGET`,
+  `ZERO_LOCATOR`, `AMBIGUOUS_LOCATOR`, `POSTCONDITION_FAILED`,
+  `CHECKPOINT_FAILED`, `EXTRACTION_FAILED`, `TIMEOUT` or `BROWSER_FAILURE`.
+
+Errors carry only fixed codes and a numeric step; no exception details, input
+values, page text, URLs or partial outputs. Successful outputs are sensitive
+in-memory return data. Result/parameter `toString()` methods redact values, and
+the CLI prints the redacted result with its effective code, including validated
+artifact identifiers such as `MEMBER_NOT_FOUND` or `VALIDATION_REJECTED`, never
+page text or output values.
+No evidence files, model requests or discovery compilation occur.
+
+Timeout defaults: 5 seconds per step and 60 seconds overall; configurable bounds
+are 1 ms–30 seconds per step and 1 ms–5 minutes overall. Navigation and final
+checkpoint/extraction receive their own per-step budget. The overall caller
+deadline also bounds launch and cleanup. Cancellation prevents later steps and
+cleanup runs on the owner thread; an already-dispatched request cannot be undone.
+No click/fill is retried by the engine. Playwright may wait for actionability
+within the remaining budget before dispatching a single action. Missing locator
+and postcondition snapshots fail immediately; this gate does not add SPA polling,
+recovery, human handoff during replay, or rollback.
+
+### Exact local fixture command (not live evidence)
+
+Start the synthetic server in one terminal:
+
+```sh
+cd /Users/surabhimarathe/interfaceai-automation
+./gradlew bootRun --args='--discovery.flow=false --discovery.proof=false'
+```
+
+In a second terminal, invoke the hand-authored fixture without an API key:
+
+```sh
+cd /Users/surabhimarathe/interfaceai-automation
+REPLAY_ORIGIN=http://localhost:8080 \
+REPLAY_MEMBER_ID=100042 \
+REPLAY_AMOUNT=25.00 \
+REPLAY_REASON='Courtesy adjustment' \
+./gradlew replay --args='src/test/resources/artifacts/prepare-fee-reversal-review.v1.json'
+```
+
+This opens headed Chromium, stops at verified review, closes the session and prints
+a redacted result. The CLI is a fee-review invocation adapter; Java callers can
+supply other typed contracts and trusted target registries. `replay.target-id`
+and the existing `discovery.allowed-*` properties configure the trusted target.
+`REPLAY_ORIGIN` is a host-side override, not artifact data. Optional environment
+settings are `REPLAY_HEADLESS=true`, `REPLAY_STEP_TIMEOUT_MS`, and
+`REPLAY_TIMEOUT_MS`. Do not source an API-key file for replay.
+
+Run offline integration and full regression tests:
+
+```sh
+./gradlew test --tests '*replay.*'
+./gradlew test --rerun-tasks
+git diff --check
+```
+
+These use local synthetic UI and the hand-authored fixture only. They are
+**non-live test execution, not authentic discovery or replay evidence**. The tests
+include a successful run with model classes unavailable, both business branches,
+ambiguous/missing controls, postcondition/extraction/checkpoint failures, configured
+submit controls, intercepted script requests, deadline bounds, and pre-launch
+rejection. Existing committed discovery evidence is not rewritten or extended.

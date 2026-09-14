@@ -4,12 +4,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.*;
 import java.util.*;
-import java.util.regex.Pattern;
 import static org.junit.jupiter.api.Assertions.*;
 
 class DiscoveryContractsTest {
     static ActionPolicy policy(String origin) {
-        return new ActionPolicy(origin, List.of(Pattern.compile("/legacy(?:/.*)?")), Set.of(UiAction.Type.FILL, UiAction.Type.CLICK));
+        var env = new org.springframework.mock.env.MockEnvironment();
+        var defaults = new Properties();
+        try (var stream = DiscoveryContractsTest.class.getResourceAsStream("/application.properties")) {
+            defaults.load(stream);
+        } catch (java.io.IOException ex) { throw new java.io.UncheckedIOException(ex); }
+        defaults.forEach((key, value) -> env.withProperty((String) key, (String) value));
+        env.withProperty("discovery.allowed-origin", origin);
+        return DiscoveryPolicyConfiguration.from(env);
     }
     @Test void rejectsBadActionsAndPolicyEscapes() {
         assertThrows(IllegalArgumentException.class, () -> new UiAction(UUID.randomUUID(), UiAction.Type.FILL, "body", "secret"));
@@ -23,9 +29,26 @@ class DiscoveryContractsTest {
         assertFalse(p.permits(click, "http://localhost:8080/legacy", "http://localhost:8080/legacy", "Submit reversal"));
         assertFalse(p.permits(click, "http://localhost:8080/legacy", "http://evil.test/legacy", "Open"));
         assertTrue(p.permits(click, "http://localhost:8080/legacy", "http://localhost:8080/legacy/members/search", "Search"));
-        var restricted = new ActionPolicy(p.origin(), p.routes(), Set.of(UiAction.Type.FILL));
+        var restricted = new ActionPolicy(p.origin(), p.routes(), Set.of(UiAction.Type.FILL), p.controlNames());
         assertFalse(restricted.permits(click, "http://localhost:8080/legacy", "http://localhost:8080/legacy", "Open"));
     }
+    @Test void controlConfigurationDefaultsToDenyAndCanBeExplicitlyChanged() {
+        var env = new org.springframework.mock.env.MockEnvironment()
+                .withProperty("discovery.allowed-origin", "http://localhost:8080")
+                .withProperty("discovery.allowed-routes", "/legacy")
+                .withProperty("discovery.allowed-actions", "FILL,CLICK");
+        var click = new UiAction(UUID.randomUUID(), UiAction.Type.CLICK, "c0", null);
+        String url = "http://localhost:8080/legacy";
+        assertFalse(DiscoveryPolicyConfiguration.from(env).permits(click, url, url, "Preview request"));
+        env.withProperty("discovery.allowed-click-controls", "Preview request");
+        var configured = DiscoveryPolicyConfiguration.from(env);
+        assertTrue(configured.permits(click, url, url, "Preview request"));
+        assertFalse(configured.permits(click, url, url, "Open"));
+        assertThrows(UnsupportedOperationException.class,
+                () -> configured.controlNames().get(UiAction.Type.CLICK).add("Open"));
+        assertFalse(configured.permits(click, url, "http://localhost:8080/other", "Preview request"));
+    }
+
     @Test void logsOnlyFixedMetadataAndNeverOverwrites(@TempDir Path dir) throws Exception {
         Path file = dir.resolve("events.jsonl");
         var log = new SafeEvents(file);

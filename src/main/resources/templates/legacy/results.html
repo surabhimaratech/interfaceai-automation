@@ -7,7 +7,6 @@
 <h1>Search Results</h1>
 <table th:if="${found}"><thead><tr><th>Member ID</th><th>Name</th><th>Action</th></tr></thead>
 <tbody><tr><td th:text="${memberId}"></td><td th:text="${memberName}"></td><td><a th:href="@{/legacy/members/{id}(id=${memberId})}">Open</a></td></tr></tbody></table>
-<div th:unless="${found}" role="status"><h2>Member not found</h2><p>MEMBER_NOT_FOUND</p><p>No member matches that ID.</p></div>
+<div th:unless="${found}" role="status" aria-labelledby="member-not-found-heading"><h2 id="member-not-found-heading">Member not found</h2><p>MEMBER_NOT_FOUND</p><p>No member matches that ID.</p></div>
 <p><a href="/legacy">New search</a></p>
 </main></body></html>
-

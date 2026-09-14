@@ -13,6 +13,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
     private Browser browser;
     private BrowserContext context;
     private Page page;
+    private BrowserPolicyGuard policyGuard;
     private Observation latest;
     private final Map<String, ElementHandle> handles = new HashMap<>();
     private boolean unexpectedDialog;
@@ -87,11 +88,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
                 playwright = Playwright.create();
                 browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(headless).setArgs(launchArgs));
                 context = browser.newContext(new Browser.NewContextOptions().setServiceWorkers(ServiceWorkerPolicy.BLOCK));
-                context.route("**/*", route -> {
-                    String url = route.request().url();
-                    boolean style = url.equals(policy.origin() + "/legacy.css") && route.request().resourceType().equals("stylesheet");
-                    if (policy.allowsUrl(url) || style) route.resume(); else route.abort();
-                });
+                policyGuard = new BrowserPolicyGuard(context, policy);
                 page = context.newPage();
                 page.setDefaultTimeout(5000);
                 page.setDefaultNavigationTimeout(5000);
@@ -128,11 +125,7 @@ public final class BrowserSession implements AutoCloseable, DiscoverySurface {
                 if (!page.url().equals(latest.url()) || !target.isVisible() || !target.isEnabled()
                     || !control.name().equals(name(target)) || !control.context().equals(nearby(target)))
                     return result(ActionResult.Status.BLOCKED, ActionResult.Code.TARGET_CHANGED);
-                String destination = (String) target.evaluate("""
-                    e => e.tagName === 'A' ? e.href :
-                         (e.form && (e.type === 'submit' || e.type === 'image')) ? (e.formAction || e.form.action) : null
-                    """);
-                if (unexpectedDialog || !policy.permits(action, page.url(), destination, control.name()))
+                if (unexpectedDialog || !policyGuard.permits(action, page, target))
                     return result(ActionResult.Status.BLOCKED, ActionResult.Code.POLICY_DENIED);
                 if (action.type() == UiAction.Type.FILL) {
                     if (!"textbox".equals(control.kind()) || !target.isEditable())

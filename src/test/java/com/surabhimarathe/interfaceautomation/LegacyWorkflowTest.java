@@ -1,6 +1,9 @@
 package com.surabhimarathe.interfaceautomation;
 
 import com.microsoft.playwright.*;
+import com.surabhimarathe.interfaceautomation.artifact.ArtifactJson;
+import com.surabhimarathe.interfaceautomation.artifact.CapabilityArtifact;
+import com.surabhimarathe.interfaceautomation.artifact.LocatorSpec;
 import com.microsoft.playwright.options.AriaRole;
 import org.junit.jupiter.api.*;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -59,6 +62,7 @@ class LegacyWorkflowTest {
         assertThat(page.locator("body")).containsText("Courtesy adjustment");
         assertThat(page.locator("body")).containsText("$1867.73");
         assertThat(page.getByRole(AriaRole.STATUS)).containsText("not submitted");
+        assertArtifactBranch(null);
         Response blocked = page.waitForResponse(r -> r.url().endsWith("/submit"), () ->
                 page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Submit reversal")).click());
         assertEquals(403, blocked.status());
@@ -75,6 +79,7 @@ class LegacyWorkflowTest {
                 page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Search")).click());
         assertEquals(200, response.status());
         assertThat(page.getByRole(AriaRole.STATUS)).containsText("MEMBER_NOT_FOUND");
+        assertArtifactBranch("MEMBER_NOT_FOUND");
         assertEquals(0, page.getByRole(AriaRole.LINK, new Page.GetByRoleOptions().setName("Open")).count());
     }
 
@@ -84,6 +89,7 @@ class LegacyWorkflowTest {
         page.getByLabel("Reason").fill("Courtesy adjustment");
         page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Review reversal")).click();
         assertThat(page.getByRole(AriaRole.ALERT)).containsText("VALIDATION_REJECTED");
+        assertArtifactBranch("VALIDATION_REJECTED");
         assertThat(page.getByLabel("Reason")).hasValue("Courtesy adjustment");
         assertEquals(0, page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName("Submit reversal")).count());
     }
@@ -106,6 +112,35 @@ class LegacyWorkflowTest {
         assertEquals(404, post("/legacy/accounts/UNKNOWN/fee-reversal/review", "25", "Adjustment").statusCode());
         assertEquals(404, page.navigate(url("/legacy/members/999999")).status());
         assertEquals(404, page.navigate(url("/legacy/accounts/UNKNOWN")).status());
+    }
+
+    // Test-only assertions against the fixture; actions above remain handwritten, not artifact replay.
+    private void assertArtifactBranch(String expectedOutcome) {
+        CapabilityArtifact artifact;
+        try (var stream = getClass().getResourceAsStream("/artifacts/prepare-fee-reversal-review.v1.json")) {
+            assertNotNull(stream);
+            artifact = new ArtifactJson().read(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+        } catch (java.io.IOException ex) { throw new java.io.UncheckedIOException(ex); }
+        for (var outcome : artifact.outcomes()) {
+            Locator condition = semanticCondition(outcome.condition().locator());
+            if (outcome.code().equals(expectedOutcome)) {
+                assertThat(condition).hasCount(1);
+                assertThat(condition).isVisible();
+            } else assertThat(condition).hasCount(0);
+        }
+        Locator checkpoint = semanticCondition(artifact.checkpoint().marker());
+        if (expectedOutcome == null) {
+            assertThat(checkpoint).hasCount(1);
+            assertThat(checkpoint).isVisible();
+        } else assertThat(checkpoint).hasCount(0);
+    }
+
+    private Locator semanticCondition(LocatorSpec spec) {
+        assertEquals(LocatorSpec.NameMatch.EXACT, spec.nameMatch());
+        assertEquals(LocatorSpec.Cardinality.EXACT_ONE, spec.cardinality());
+        assertNull(spec.context());
+        return page.getByRole(AriaRole.valueOf(spec.role().name()),
+                new Page.GetByRoleOptions().setName(spec.accessibleName()).setExact(true));
     }
 
     private HttpResponse<String> post(String path, String amount, String reason) throws Exception {

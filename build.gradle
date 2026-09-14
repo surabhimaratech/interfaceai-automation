@@ -36,3 +36,8 @@ tasks.register('playwright', JavaExec) {
 	classpath = sourceSets.main.runtimeClasspath
 	mainClass = 'com.microsoft.playwright.CLI'
 }
+
+tasks.register('replay', JavaExec) {
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'com.surabhimarathe.interfaceautomation.replay.ReplayCli'
+}

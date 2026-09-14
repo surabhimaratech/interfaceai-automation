@@ -8,7 +8,6 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.*;
-import java.util.regex.Pattern;
 
 /** Opt-in CLI flow; returned details stay in memory and out of evidence logs. */
 @Component
@@ -24,9 +23,7 @@ public final class DiscoveryFlow implements ApplicationRunner {
         if (env.getProperty("discovery.proof", Boolean.class, false)) throw new IllegalArgumentException("SELECT_ONE_DISCOVERY_MODE");
         var client = new OpenRouterClient(System.getenv("OPENROUTER_API_KEY"));
         String origin = env.getRequiredProperty("discovery.allowed-origin");
-        var policy = new ActionPolicy(origin,
-            Arrays.stream(env.getRequiredProperty("discovery.allowed-routes").split(",")).map(Pattern::compile).toList(),
-            Set.copyOf(Arrays.stream(env.getRequiredProperty("discovery.allowed-actions").split(",")).map(String::trim).map(UiAction.Type::valueOf).toList()));
+        var policy = DiscoveryPolicyConfiguration.from(env);
         var request = new ReviewCheckpoint.Request(env.getProperty("discovery.member-id", "100042"),
             env.getProperty("discovery.account-id", "SAV-2048"), new BigDecimal(env.getProperty("discovery.amount", "25.00")),
             env.getProperty("discovery.reason", "Courtesy adjustment"));
