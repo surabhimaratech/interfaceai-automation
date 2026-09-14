@@ -1,6 +1,10 @@
 # InterfaceAI Automation
 
-Day 1 target application: Java 21, Spring Boot 4.1.1, Playwright Java 1.62.0.
+[Read the implementation report](REPORT.md) for architecture, evidence and limitations.
+
+Java 21, Spring Boot 4.1.1, Playwright Java 1.62.0. Commands run from the
+repository root. From its parent directory, use `cd interfaceai-automation`;
+if you cloned under another name, use that directory instead.
 
 ## Run
 
@@ -30,10 +34,10 @@ return `VALIDATION_REJECTED` (HTTP 422) and preserve the form. Amounts must be
 | POST | /legacy/accounts/{accountId}/fee-reversal/review |
 | POST | /legacy/accounts/{accountId}/fee-reversal/submit |
 
-Submit reversal is present for the later automation-policy demo. The target also
+Submit reversal is present to exercise automation-policy blocking. The target also
 unconditionally rejects submission with `ACTION_BLOCKED` (HTTP 403); it never
-changes a balance. This target-side backstop does not replace the future runtime
-policy check that must reject the action before execution.
+changes a balance. This target-side backstop complements the implemented runtime
+policy check, which rejects submit actions before execution.
 
 ## Test
 
@@ -61,7 +65,9 @@ is documented in `evidence/README.md` under run UUID
 recoverability classification and opt-in privacy-safe diagnostic storage. Day 3
 gate 2 adds bounded, pre-action same-session human handoff during deterministic replay.
 Gate 3 adds explicit tenant-scoped target resolution and additive host-configured
-diagnostic redaction.
+diagnostic redaction. Day 4 exceptional replay evidence records the declared
+`MEMBER_NOT_FOUND` branch with a stored sanitized diagnostic; see
+[evidence/README.md](evidence/README.md).
 Real authentication is not implemented; session expiry is an explicit UI
 simulation. Offline browser/client/replay tests are not live LLM evidence.
 
@@ -146,8 +152,8 @@ requires the review route/title, the not-submitted status, no alerts, exact
 member/account/reason/amount, and consistent current/projected balances. The
 runner returns `Result` with typed `ReviewCheckpoint.Details` only on verified
 success. `DiscoveryFlow.result()` retains this result in memory; stdout prints
-only state/code/step count. This increment does not expose a result API or persist
-financial details.
+only state/code/step count. No HTTP result endpoint or persistence of financial
+details is provided.
 
 Known not-found and validation messages return BUSINESS_OUTCOME without another
 model call. REQUEST_HUMAN or an unknown alert pauses for the local operator when
@@ -215,7 +221,8 @@ page data are captured. The count is a local audit signal, not identity proof.
 `./gradlew test` includes state-machine, repetition, summary, stale-resume and
 same-page integration tests. The integration test uses a second CDP client as a
 **simulated** operator and pumps browser events like the real runner. It is not
-presented as a real human demonstration. CDP is enabled only in that test.
+presented as a real human demonstration. CDP attachment is test-only; the replay
+handoff tests below also use it to simulate an operator.
 
 ## Day 2 gate 1: capability artifact schema
 
@@ -224,7 +231,8 @@ boundary, `ArtifactJson.read/write`. `schemaVersion: 1` selects the wire format;
 positive `artifactVersion` independently versions a capability definition. The
 hand-authored example is
 `src/test/resources/artifacts/prepare-fee-reversal-review.v1.json`. It is a schema
-fixture, **not authentic discovery evidence**; nothing was added to `evidence/`.
+fixture, **not authentic discovery evidence**. The original schema-only gate
+added no evidence; later live compilation and replay evidence is linked below.
 
 - Capability metadata includes a required display name (max 160 characters),
   description (max 1000), and structured `executionBoundary: {"mode":"REVIEW_ONLY"}`.
@@ -232,8 +240,8 @@ fixture, **not authentic discovery evidence**; nothing was added to `evidence/`.
   or control-character-bearing metadata is rejected.
 - `TargetSpec` contains only a logical `targetId` (max 80, letters/digits/underscore/
   hyphen, starting with a letter) and bounded entry path. Concrete origins and
-  URL overrides are not accepted fields. The eventual executor must receive or
-  resolve the origin through trusted runtime policy; the artifact cannot supply it.
+  URL overrides are not accepted fields. Replay resolves the origin through trusted
+  tenant/target runtime configuration; the artifact cannot supply it.
   Named inputs are required, with no defaults.
   `STRING` contracts require min/max length (max 1000); `DECIMAL` contracts require
   inclusive min/max and maxScale (0–8). Inapplicable constraints are rejected.
@@ -282,9 +290,9 @@ These application defaults exist only in runtime configuration, not in the
 artifact validator. Even configured names cannot authorize a submit destination:
 the URL policy rejects submit path segments, encoded paths and origin/route
 escapes. The existing target's review POST remains permitted; its final submit
-POST remains blocked. Gate 1 supplies declarations only; gate 2 below implements
-runtime target resolution, policy-checked execution and verification. Neither
-gate grants permissions based on artifact labels or integrates live compilation.
+POST remains blocked. Historically, gates 1 and 2 supplied declarations and
+policy-checked replay without live compilation. Gate 3 below adds execution-derived
+compilation. No gate grants permissions based on artifact labels.
 
 `DiscoveryTrace.recordSuccessful` accepts only executed FILL/CLICK actions with
 matching successful result codes and explicit semantic descriptors supplied by
@@ -358,7 +366,9 @@ The typed `ReplayResult` returns:
 - `FAILED` with `INVALID_ARTIFACT`, `INVALID_PARAMETERS`, `UNKNOWN_TARGET`,
   `ZERO_LOCATOR`, `AMBIGUOUS_LOCATOR`, `POSTCONDITION_FAILED`,
   `CHECKPOINT_FAILED`, `EXTRACTION_FAILED`, `TIMEOUT`, `UNEXPECTED_DIALOG`,
-  `INTERRUPTED` or `BROWSER_FAILURE`.
+  `INTERRUPTED` or `BROWSER_FAILURE`. Later gates also add `UNKNOWN_TENANT`,
+  `UNKNOWN_TENANT_TARGET`, `HUMAN_ACTION_REQUIRED`, `HANDOFF_TIMEOUT`,
+  `HANDOFF_LIMIT` and `OWNERSHIP_DENIED`, detailed below.
 
 Non-success results now also carry the bounded diagnostics described in Day 3
 below; no exception details, input values, page text, URLs or partial outputs.
@@ -386,14 +396,15 @@ human handoff; it does not retry dispatched actions.
 Start the synthetic server in one terminal:
 
 ```sh
-cd /Users/surabhimarathe/interfaceai-automation
+cd interfaceai-automation
 ./gradlew bootRun --args='--discovery.flow=false --discovery.proof=false'
 ```
 
 In a second terminal, invoke the hand-authored fixture without an API key:
 
 ```sh
-cd /Users/surabhimarathe/interfaceai-automation
+cd interfaceai-automation
+env -u OPENROUTER_API_KEY \
 REPLAY_TENANT_ID=synthetic-local \
 REPLAY_ORIGIN=http://localhost:8080 \
 REPLAY_MEMBER_ID=100042 \
@@ -419,7 +430,7 @@ Run offline integration and full regression tests:
 git diff --check
 ```
 
-These use local synthetic UI and the hand-authored fixture only. They are
+These use local synthetic UI and reviewed test fixtures/configuration. They are
 **non-live test execution, not authentic discovery or replay evidence**. The tests
 include a successful run with model classes unavailable, both business branches,
 ambiguous/missing controls, postcondition/extraction/checkpoint failures, configured
@@ -524,7 +535,7 @@ the exact compiled artifact with `OPENROUTER_API_KEY` removed. No reversal was s
 ### Offline integration contract (not authentic evidence)
 
 ```sh
-cd /Users/surabhimarathe/interfaceai-automation
+cd interfaceai-automation
 ./gradlew test --tests '*DiscoveryCompilationTest'
 ./gradlew test --rerun-tasks
 git diff --check
@@ -608,7 +619,7 @@ and starting the synthetic target, deliberately request a missing member. The
 member ID override applies only to this command, leaving the caller's value unchanged:
 
 ```sh
-export REPLAY_DIAGNOSTIC_DIRECTORY=/private/tmp/interfaceai-replay-diagnostics
+export REPLAY_DIAGNOSTIC_DIRECTORY="$(mktemp -d)"
 env -u OPENROUTER_API_KEY REPLAY_TENANT_ID=synthetic-local REPLAY_MEMBER_ID=999999 ./gradlew replay --args='src/test/resources/artifacts/prepare-fee-reversal-review.v1.json'
 unset REPLAY_DIAGNOSTIC_DIRECTORY
 ```
@@ -722,7 +733,7 @@ command. No live demonstration was performed for this gate.
 ### Exact offline verification
 
 ```sh
-cd /Users/surabhimarathe/interfaceai-automation
+cd interfaceai-automation
 ./gradlew test --tests '*ReplayHandoffIntegrationTest' --tests '*ReplayOperatorTest' --rerun-tasks
 ./gradlew test --rerun-tasks
 git diff --check
@@ -804,7 +815,9 @@ to step IDs and expected artifact role/name/context strings; fixed enum roles an
 cardinality contain no observed data. All registered tenant identifiers are
 suppressed from diagnostic text. Result presentation and UUID diagnostic filenames
 contain no tenant metadata. Artifact outcome identifiers containing a registered
-tenant identifier are rejected rather than reflected in redacted result output.
+tenant identifier in any case are rejected rather than reflected in redacted
+result output. Invocation-value and tenant suppression use `Locale.ROOT`
+case-insensitive comparisons; tenant registry lookup itself remains case-sensitive.
 
 Policies defensively copy their configuration. At most 32 literal secrets and
 16 patterns are accepted; each must be nonblank, control-character-free and at
@@ -821,7 +834,7 @@ before browser launch.
 ### Offline verification and limitations
 
 ```sh
-cd /Users/surabhimarathe/interfaceai-automation
+cd interfaceai-automation
 ./gradlew test --tests '*TenantReplayIntegrationTest' --tests '*DiagnosticRedactionPolicyTest' --rerun-tasks
 ./gradlew test --rerun-tasks
 git diff --check
