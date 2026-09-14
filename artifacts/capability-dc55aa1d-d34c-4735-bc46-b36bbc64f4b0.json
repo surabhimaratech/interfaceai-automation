@@ -1,0 +1,433 @@
+{
+  "schemaVersion" : 1,
+  "artifactVersion" : 1,
+  "capabilityId" : "prepare-fee-reversal-review",
+  "displayName" : "Prepare fee reversal review",
+  "description" : "Find a member and prepare a fee reversal for review without submitting it.",
+  "executionBoundary" : {
+    "mode" : "REVIEW_ONLY"
+  },
+  "target" : {
+    "targetId" : "legacy-banking",
+    "entryPath" : "/legacy"
+  },
+  "inputs" : {
+    "reason" : {
+      "type" : "STRING",
+      "constraints" : {
+        "minLength" : 1,
+        "maxLength" : 120,
+        "minimum" : null,
+        "maximum" : null,
+        "maxScale" : null
+      },
+      "description" : "Reason for the requested fee reversal."
+    },
+    "amount" : {
+      "type" : "DECIMAL",
+      "constraints" : {
+        "minLength" : null,
+        "maxLength" : null,
+        "minimum" : 0.01,
+        "maximum" : 100,
+        "maxScale" : 2
+      },
+      "description" : "Requested fee reversal amount."
+    },
+    "memberId" : {
+      "type" : "STRING",
+      "constraints" : {
+        "minLength" : 6,
+        "maxLength" : 6,
+        "minimum" : null,
+        "maximum" : null,
+        "maxScale" : null
+      },
+      "description" : "Member identifier used to find the record."
+    }
+  },
+  "outputs" : {
+    "accountId" : {
+      "type" : "STRING",
+      "constraints" : {
+        "minLength" : 1,
+        "maxLength" : 32,
+        "minimum" : null,
+        "maximum" : null,
+        "maxScale" : null
+      },
+      "description" : "Account identifier on the review."
+    },
+    "projectedBalance" : {
+      "type" : "DECIMAL",
+      "constraints" : {
+        "minLength" : null,
+        "maxLength" : null,
+        "minimum" : 0,
+        "maximum" : 1000000000000,
+        "maxScale" : 2
+      },
+      "description" : "Projected balance after the proposed reversal."
+    },
+    "memberId" : {
+      "type" : "STRING",
+      "constraints" : {
+        "minLength" : 6,
+        "maxLength" : 6,
+        "minimum" : null,
+        "maximum" : null,
+        "maxScale" : null
+      },
+      "description" : "Member identifier on the review."
+    },
+    "memberName" : {
+      "type" : "STRING",
+      "constraints" : {
+        "minLength" : 1,
+        "maxLength" : 160,
+        "minimum" : null,
+        "maximum" : null,
+        "maxScale" : null
+      },
+      "description" : "Member name on the review."
+    },
+    "reason" : {
+      "type" : "STRING",
+      "constraints" : {
+        "minLength" : 1,
+        "maxLength" : 120,
+        "minimum" : null,
+        "maximum" : null,
+        "maxScale" : null
+      },
+      "description" : "Reason shown on the review."
+    },
+    "amount" : {
+      "type" : "DECIMAL",
+      "constraints" : {
+        "minLength" : null,
+        "maxLength" : null,
+        "minimum" : 0.01,
+        "maximum" : 100,
+        "maxScale" : 2
+      },
+      "description" : "Requested reversal amount on the review."
+    },
+    "currentBalance" : {
+      "type" : "DECIMAL",
+      "constraints" : {
+        "minLength" : null,
+        "maxLength" : null,
+        "minimum" : 0,
+        "maximum" : 1000000000000,
+        "maxScale" : 2
+      },
+      "description" : "Balance before the proposed reversal."
+    }
+  },
+  "steps" : [ {
+    "id" : "step-1",
+    "action" : "FILL",
+    "locator" : {
+      "role" : "TEXTBOX",
+      "accessibleName" : "Member ID",
+      "nameMatch" : "EXACT",
+      "context" : null,
+      "cardinality" : "EXACT_ONE"
+    },
+    "inputExpression" : "${inputs.memberId}",
+    "postcondition" : {
+      "kind" : "VALUE_EQUALS_INPUT",
+      "locator" : {
+        "role" : "TEXTBOX",
+        "accessibleName" : "Member ID",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : "${inputs.memberId}"
+    }
+  }, {
+    "id" : "step-2",
+    "action" : "CLICK",
+    "locator" : {
+      "role" : "BUTTON",
+      "accessibleName" : "Search",
+      "nameMatch" : "EXACT",
+      "context" : null,
+      "cardinality" : "EXACT_ONE"
+    },
+    "inputExpression" : null,
+    "postcondition" : {
+      "kind" : "VISIBLE",
+      "locator" : {
+        "role" : "HEADING",
+        "accessibleName" : "Search Results",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : null
+    }
+  }, {
+    "id" : "step-3",
+    "action" : "CLICK",
+    "locator" : {
+      "role" : "LINK",
+      "accessibleName" : "Open",
+      "nameMatch" : "EXACT",
+      "context" : null,
+      "cardinality" : "EXACT_ONE"
+    },
+    "inputExpression" : null,
+    "postcondition" : {
+      "kind" : "VISIBLE",
+      "locator" : {
+        "role" : "HEADING",
+        "accessibleName" : "Member Details",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : null
+    }
+  }, {
+    "id" : "step-4",
+    "action" : "CLICK",
+    "locator" : {
+      "role" : "LINK",
+      "accessibleName" : "Open",
+      "nameMatch" : "EXACT",
+      "context" : {
+        "kind" : "ROW",
+        "text" : "Savings"
+      },
+      "cardinality" : "EXACT_ONE"
+    },
+    "inputExpression" : null,
+    "postcondition" : {
+      "kind" : "VISIBLE",
+      "locator" : {
+        "role" : "HEADING",
+        "accessibleName" : "Savings Account",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : null
+    }
+  }, {
+    "id" : "step-5",
+    "action" : "CLICK",
+    "locator" : {
+      "role" : "LINK",
+      "accessibleName" : "Prepare fee reversal",
+      "nameMatch" : "EXACT",
+      "context" : null,
+      "cardinality" : "EXACT_ONE"
+    },
+    "inputExpression" : null,
+    "postcondition" : {
+      "kind" : "VISIBLE",
+      "locator" : {
+        "role" : "HEADING",
+        "accessibleName" : "Prepare Fee Reversal",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : null
+    }
+  }, {
+    "id" : "step-6",
+    "action" : "FILL",
+    "locator" : {
+      "role" : "TEXTBOX",
+      "accessibleName" : "Amount",
+      "nameMatch" : "EXACT",
+      "context" : null,
+      "cardinality" : "EXACT_ONE"
+    },
+    "inputExpression" : "${inputs.amount}",
+    "postcondition" : {
+      "kind" : "VALUE_EQUALS_INPUT",
+      "locator" : {
+        "role" : "TEXTBOX",
+        "accessibleName" : "Amount",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : "${inputs.amount}"
+    }
+  }, {
+    "id" : "step-7",
+    "action" : "FILL",
+    "locator" : {
+      "role" : "TEXTBOX",
+      "accessibleName" : "Reason",
+      "nameMatch" : "EXACT",
+      "context" : null,
+      "cardinality" : "EXACT_ONE"
+    },
+    "inputExpression" : "${inputs.reason}",
+    "postcondition" : {
+      "kind" : "VALUE_EQUALS_INPUT",
+      "locator" : {
+        "role" : "TEXTBOX",
+        "accessibleName" : "Reason",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : "${inputs.reason}"
+    }
+  }, {
+    "id" : "step-8",
+    "action" : "CLICK",
+    "locator" : {
+      "role" : "BUTTON",
+      "accessibleName" : "Review reversal",
+      "nameMatch" : "EXACT",
+      "context" : null,
+      "cardinality" : "EXACT_ONE"
+    },
+    "inputExpression" : null,
+    "postcondition" : {
+      "kind" : "VISIBLE",
+      "locator" : {
+        "role" : "HEADING",
+        "accessibleName" : "Fee Reversal Review",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : null
+    }
+  } ],
+  "outcomes" : [ {
+    "code" : "MEMBER_NOT_FOUND",
+    "condition" : {
+      "kind" : "VISIBLE",
+      "locator" : {
+        "role" : "STATUS",
+        "accessibleName" : "Member not found",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : null
+    }
+  }, {
+    "code" : "VALIDATION_REJECTED",
+    "condition" : {
+      "kind" : "VISIBLE",
+      "locator" : {
+        "role" : "ALERT",
+        "accessibleName" : "VALIDATION_REJECTED",
+        "nameMatch" : "EXACT",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "inputExpression" : null
+    }
+  } ],
+  "checkpoint" : {
+    "marker" : {
+      "role" : "HEADING",
+      "accessibleName" : "Fee Reversal Review",
+      "nameMatch" : "EXACT",
+      "context" : null,
+      "cardinality" : "EXACT_ONE"
+    },
+    "extractors" : [ {
+      "output" : "memberId",
+      "locator" : {
+        "role" : "ROW",
+        "accessibleName" : "Member ID",
+        "nameMatch" : "PREFIX",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "read" : "ROW_VALUE",
+      "format" : "TEXT",
+      "expectedInputExpression" : "${inputs.memberId}"
+    }, {
+      "output" : "memberName",
+      "locator" : {
+        "role" : "ROW",
+        "accessibleName" : "Name",
+        "nameMatch" : "PREFIX",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "read" : "ROW_VALUE",
+      "format" : "TEXT",
+      "expectedInputExpression" : null
+    }, {
+      "output" : "accountId",
+      "locator" : {
+        "role" : "ROW",
+        "accessibleName" : "Account",
+        "nameMatch" : "PREFIX",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "read" : "ROW_VALUE",
+      "format" : "TEXT",
+      "expectedInputExpression" : null
+    }, {
+      "output" : "currentBalance",
+      "locator" : {
+        "role" : "ROW",
+        "accessibleName" : "Current balance",
+        "nameMatch" : "PREFIX",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "read" : "ROW_VALUE",
+      "format" : "USD_DECIMAL",
+      "expectedInputExpression" : null
+    }, {
+      "output" : "amount",
+      "locator" : {
+        "role" : "ROW",
+        "accessibleName" : "Reversal amount",
+        "nameMatch" : "PREFIX",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "read" : "ROW_VALUE",
+      "format" : "USD_DECIMAL",
+      "expectedInputExpression" : "${inputs.amount}"
+    }, {
+      "output" : "reason",
+      "locator" : {
+        "role" : "ROW",
+        "accessibleName" : "Reason",
+        "nameMatch" : "PREFIX",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "read" : "ROW_VALUE",
+      "format" : "TEXT",
+      "expectedInputExpression" : "${inputs.reason}"
+    }, {
+      "output" : "projectedBalance",
+      "locator" : {
+        "role" : "ROW",
+        "accessibleName" : "Projected balance",
+        "nameMatch" : "PREFIX",
+        "context" : null,
+        "cardinality" : "EXACT_ONE"
+      },
+      "read" : "ROW_VALUE",
+      "format" : "USD_DECIMAL",
+      "expectedInputExpression" : null
+    } ]
+  },
+  "provenance" : {
+    "source" : "COMPILED_TRACE",
+    "traceId" : "dc55aa1d-d34c-4735-bc46-b36bbc64f4b0"
+  }
+}

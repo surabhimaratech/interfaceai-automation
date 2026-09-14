@@ -20,7 +20,7 @@ The run used port 18080 to avoid interfering with an existing local target:
 `OPENROUTER_API_KEY` was loaded into the process environment from the ignored
 local `.env` file without printing it. The temporary server was stopped afterward.
 
-This proves one live model-generated action only. It does not establish a complete
+This historical run proves one live model-generated action only. It does not establish a complete
 discovery workflow, a capability artifact, or deterministic replay. Offline tests
 are separate from this live evidence.
 
@@ -52,5 +52,45 @@ result to the operator, and closed the application. It did not script UI actions
 or replace any model decision. Review values were not persisted in JSONL.
 The ordinary `--discovery.flow=true` command runs the same discovery code.
 
-All 22 tests passed in a fresh `./gradlew test --rerun-tasks` run. The success log
-is discovery evidence only; no reusable artifact or deterministic replay exists.
+At that stage, all 22 tests passed in a fresh `./gradlew test --rerun-tasks` run.
+That success log is discovery evidence only; reusable artifacts and deterministic
+replay had not yet been implemented. The Day 2 demonstration below is separate.
+
+## Day 2 live discover → compile → replay success
+
+Run UUID: `dc55aa1d-d34c-4735-bc46-b36bbc64f4b0`.
+Discovery occurred on 2026-09-13 Pacific (2026-09-14 UTC).
+Paths below are relative to the repository root.
+
+- `evidence/flow-dc55aa1d-d34c-4735-bc46-b36bbc64f4b0.jsonl` records authentic
+  OpenRouter discovery using pinned `anthropic/claude-sonnet-5`: nine model
+  decisions, eight successful UI actions, and `SUCCEEDED / CHECKPOINT_VERIFIED`.
+  The ninth decision is COMPLETE, not a persisted UI action.
+- `artifacts/capability-dc55aa1d-d34c-4735-bc46-b36bbc64f4b0.json` is the
+  execution-derived eight-step artifact, with provenance source `COMPILED_TRACE`
+  and the same trace UUID. Its trusted contracts and vocabulary are predefined;
+  the ordered steps derive from successful browser execution, not model-supplied
+  locators or postconditions.
+- `evidence/replay-dc55aa1d-d34c-4735-bc46-b36bbc64f4b0.txt` records deterministic
+  replay of that exact artifact with `OPENROUTER_API_KEY` explicitly removed
+  from the replay process environment. It ends
+  `SUCCEEDED / CHECKPOINT_VERIFIED / step=8`, with `outputs=REDACTED`.
+
+The artifact stores `${inputs.memberId}`, `${inputs.amount}` and `${inputs.reason}`
+expressions rather than invocation values. It contains no runtime control or
+observation IDs, browser handles, raw CSS/XPath selectors, model transcript, or
+submit action. Its durable locators use semantic roles, accessible names and,
+for the ambiguous Open link, the bounded Savings row context. Its execution
+boundary is `REVIEW_ONLY`. No reversal was submitted during discovery or replay.
+
+The automation logs omit inputs, extracted outputs, page content, target URLs,
+exception details and secrets. The replay file also contains ordinary Gradle
+build output, including a public Gradle documentation URL, not a target URL.
+Replay output is intentionally redacted: exact typed outputs are verified by
+the checkpoint and automated integration tests, not exposed in this log.
+Those offline tests remain distinct from this live demonstration.
+
+UUID correlation links the discovery log, artifact provenance and replay filename;
+it is evidence linkage, not cryptographic attestation. The redacted replay result
+does not itself attest to the process environment or artifact bytes, and no raw
+provider transcript or receipt is retained.
