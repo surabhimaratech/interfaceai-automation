@@ -853,3 +853,113 @@ artifact vocabulary. Additive patterns are deliberately restrictive, not a
 general-purpose PII detector. Conservative tenant-name collisions can reject an
 outcome identifier or mask benign metadata. No automatic retry, rollback, new
 live evidence or reversal submission is introduced.
+
+## Optional stretch: confidence & approval — gate 1
+
+The isolated `approval` package defines governance metadata, **not replay
+enforcement**. Neither `ReplayEngine` nor the CLI consults approval state yet.
+There is no new live evidence, approval endpoint or operator UI. The host is
+responsible for supplying truthful observations and an identified human approver;
+the module does not authenticate either assertion.
+
+`ArtifactIdentity.from(TenantId, byte[])` first strictly decodes UTF-8 and validates
+with `ArtifactJson`, then hashes the exact bytes with SHA-256. Identity comprises
+capability ID, logical target ID, schema/artifact versions, artifact digest and
+tenant-scope hash. Whitespace changes are deliberately new identities; no JSON
+canonicalization or inherited approval occurs. Tenant hashes use UTF-8 bytes of
+`interfaceai:approval:tenant:v1`, a NUL separator, and the exact tenant identifier.
+Actor hashes use the distinct `interfaceai:approval:actor:v1` domain. All digests
+are lowercase 64-character hexadecimal. Raw tenant/actor IDs are never journal
+fields; displays redact identities. Artifact identifiers containing the tenant
+identifier case-insensitively are rejected to avoid copying it into metadata.
+Hashes are pseudonyms, not encryption: small identifier spaces remain guessable.
+
+Confidence counts `SUCCESS` and `EXPECTED_OUTCOME` as handled automated runs:
+correctly recognizing a declared business branch is successful automation even
+when the requested business operation cannot proceed. `RECOVERABLE_FAILURE`
+adds an unsuccessful eligible run. `POLICY_BLOCK` and `HARD_FAILURE` also add
+safety failures. `HUMAN_ASSISTED` increments a separate count but neither automated
+numerator nor denominator: human repair does not establish unattended reliability.
+Only these fixed observations are stored, never replay results, diagnostics,
+invocation values, URLs, outputs or page content.
+
+For handled count `h`, eligible count `n`, `p=h/n`, and fixed `z=1.96`, the score is:
+
+```text
+lower = (p + z²/(2n) - z*sqrt(p*(1-p)/n + z²/(4n²))) / (1 + z²/n)
+basisPoints = floor(10000 * clamp(lower, 0, 1))
+```
+
+No eligible runs gives zero. Java strict floating-point operations and `StrictMath`
+produce a deterministic result; flooring deliberately rounds down, not to nearest.
+Independent high-precision fixtures are 0/0 → 0, 5/5 → 5655, 4/5 → 3755,
+9/10 → 5958, and 10/10 → 7224. State exposes handled, eligible, assisted,
+safety-failure counts and basis points. These statistical scores do not establish
+independence of runs, general application coverage or authority to execute.
+
+`ApprovalPolicy` bounds minimum eligible runs to 1–100 and score to 0–10000.
+Defaults are five eligible runs and 5000 basis points; zero safety failures is
+mandatory and cannot be disabled. Eligibility never transitions lifecycle:
+`DRAFT -> APPROVED -> SUSPENDED`. `ApprovalService.approve` requires an explicit
+nonblank, bounded human identifier and records only its hash plus injected-clock
+time. Unknown identities, ineligible drafts, any pre-approval safety failure,
+repeat approval and approval after suspension are rejected with fixed codes.
+Suspension requires APPROVED and a fixed `SuspensionReason`, never free-form prose.
+SUSPENDED accepts no further observations or approval in v1. A repaired artifact
+needs a new version/digest and starts DRAFT. Later observations do not silently
+approve or suspend an existing identity; suspension remains explicit.
+
+Host-only example (metadata operations, not a replay or authentication flow):
+
+```java
+var store = new InMemoryGovernanceStore();
+var governance = new ApprovalService(store, ApprovalPolicy.defaults(), clock);
+var draft = governance.register(new TenantId("synthetic-local"), exactArtifactBytes);
+// Record fixed observations only after the host has established their provenance.
+// Once eligible, an identified human must explicitly call approve(identity, actor).
+```
+
+`GovernanceStore` has immutable-snapshot in-memory and opt-in `FileGovernanceStore`
+implementations. The latter accepts a trusted directory and optional UUID supplier;
+the service accepts an injected `Clock`. Each event carries journal schema v1,
+identity metadata, type, applicable fixed observation/reason, global revision,
+timestamp, and actor hash plus immutable approval criteria only for approval.
+The criteria explicitly record minimum eligible runs, minimum score and the
+mandatory zero-safety-failures rule used at decision time. State is rebuilt, not
+trusted from a serialized score: each historical approval is validated against
+its own stored criteria and the preceding reconstructed reliability counts.
+Current policy governs only future DRAFT eligibility and new approvals; tightening
+it does not invalidate older approvals or block unrelated identities. Withdrawing
+an older approval requires explicit suspension. `ApprovalState.approvedUnder`
+remains available after approval, later observations and suspension; it is null
+for DRAFT. Criteria provide audit context, not authentication or tamper attestation.
+Journal schema remains v1 because this gate is uncommitted and unpublished.
+Pre-correction journals lacking the required field are rejected, not silently
+upgraded; no legacy migration or inferred historical policy is provided.
+
+Files are `event-<10-digit-revision>-<uuid>.json`, with no identifying metadata in
+filenames. Publication flushes a same-directory temporary file and atomically
+creates a hard link; collision or unsupported hard links never fall back to
+overwrite. Temporary files are cleaned up. The journal rejects invalid JSON,
+unknown fields, missing/duplicate/out-of-order revisions, repeated UUIDs,
+backward timestamps, conflicting identity metadata and illegal transitions.
+Unexpected files, including crash-left temporary files, fail closed. Limits are
+100000 events per journal and 8192 bytes per event. Existing bytes are never
+rewritten. In-process mutation locks serialize updates, including separate store
+instances resolving to the same real directory; concurrent calls cannot lose events.
+
+This is trusted local append-only storage, not tamper-evident persistence.
+Multi-process writers are unsupported. Administrators must protect the directory;
+valid malicious rewrites, complete deletion or tail truncation cannot be proven
+absent without an external trust anchor. There is no remote approval service,
+authentication, key management, signatures, retention/rotation, automatic recovery,
+or rollback. A filesystem failure after publication can leave a committed event
+despite an error response; inspect history rather than retrying blindly.
+
+Offline verification (temporary test journals only, no model calls):
+
+```sh
+./gradlew test --tests '*approval.*' --rerun-tasks
+./gradlew test --rerun-tasks
+git diff --check
+```
