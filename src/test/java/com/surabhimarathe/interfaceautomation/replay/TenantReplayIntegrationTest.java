@@ -108,10 +108,10 @@ class TenantReplayIntegrationTest {
         assertNotEquals(portA,portB);
         var engine = new ReplayEngine(registry(DiagnosticRedactionPolicy.baseline()),options);
         String json = fixture();
-        exact(engine.run(a,json,parameters()));
+        exact(engine.runValidation(a,json,parameters()));
         assertTrue(count(portA)>0); assertEquals(0,count(portB));
         int prior = count(portA);
-        exact(engine.run(b,json,parameters()));
+        exact(engine.runValidation(b,json,parameters()));
         assertEquals(prior,count(portA)); assertTrue(count(portB)>0);
     }
 
@@ -125,8 +125,8 @@ class TenantReplayIntegrationTest {
                 a,Map.of("legacy-banking",config(portA,null,DiagnosticRedactionPolicy.baseline())),
                 b,Map.of("legacy-banking",new TenantTargetConfiguration(restricted,null,DiagnosticRedactionPolicy.baseline()))));
         var engine = new ReplayEngine(registry,options);
-        exact(engine.run(a,fixture(),parameters()));
-        var denied = engine.run(b,fixture(),parameters());
+        exact(engine.runValidation(a,fixture(),parameters()));
+        var denied = engine.runValidation(b,fixture(),parameters());
         failure(denied,POLICY_DENIED); assertEquals(2,denied.step());
     }
 
@@ -137,20 +137,20 @@ class TenantReplayIntegrationTest {
         var engine = new ReplayEngine(registry,options);
         pages.put(portA,Map.of("/legacy",entry("/legacy/members/search","<div role='alert' aria-label='Expiry A'>PRIVATE_PAGE</div>")));
         pages.put(portB,Map.of("/legacy",entry("/legacy/members/search","<div role='status' aria-label='Expiry B'>PRIVATE_PAGE</div>")));
-        failure(engine.run(a,fixture(),parameters()),HUMAN_ACTION_REQUIRED);
-        failure(engine.run(b,fixture(),parameters()),HUMAN_ACTION_REQUIRED);
+        failure(engine.runValidation(a,fixture(),parameters()),HUMAN_ACTION_REQUIRED);
+        failure(engine.runValidation(b,fixture(),parameters()),HUMAN_ACTION_REQUIRED);
         pages.put(portA,pages.get(portB)); // Wrong tenant's marker is not an expiry signal.
-        exact(engine.run(a,fixture(),parameters()));
+        exact(engine.runValidation(a,fixture(),parameters()));
     }
 
     @Test void crossOriginControlAndBackgroundRequestAreBothDeniedWithoutContactingOtherTenant() throws Exception {
         var engine = new ReplayEngine(registry(DiagnosticRedactionPolicy.baseline()),options);
         pages.put(portA,Map.of("/legacy",entry(origin(portB)+"/legacy/members/search","")));
-        failure(engine.run(a,fixture(),parameters()),POLICY_DENIED);
+        failure(engine.runValidation(a,fixture(),parameters()),POLICY_DENIED);
         assertEquals(0,count(portB));
         pages.put(portA,Map.of("/legacy",entry("/legacy/members/search",
                 "<script>const x=new XMLHttpRequest();x.open('POST','"+origin(portB)+"/legacy/members/search',false);try{x.send()}catch(e){}</script>")));
-        failure(engine.run(a,fixture(),parameters()),POLICY_DENIED);
+        failure(engine.runValidation(a,fixture(),parameters()),POLICY_DENIED);
         assertEquals(0,count(portB));
     }
 
@@ -162,25 +162,25 @@ class TenantReplayIntegrationTest {
         Path directory = temporary.resolve("diagnostics");
         var engine = new ReplayEngine(registry,options,(p,o) -> { launches.incrementAndGet(); throw new IllegalStateException("PRIVATE_EXCEPTION"); },
                 new DiagnosticStore(directory),null);
-        var unknown = engine.run(new TenantId("unknownScope"),fixture(),parameters());
+        var unknown = engine.runValidation(new TenantId("unknownScope"),fixture(),parameters());
         failure(unknown,UNKNOWN_TENANT);
         assertEquals(ReplayResult.Disposition.HARD_FAILURE,unknown.disposition());
         assertEquals(ReplayResult.DiagnosticPersistence.STORED,unknown.diagnosticPersistence());
-        var missing = engine.run(b,fixture(),parameters());
+        var missing = engine.runValidation(b,fixture(),parameters());
         failure(missing,UNKNOWN_TENANT_TARGET);
         assertEquals(ReplayResult.Disposition.HARD_FAILURE,missing.disposition());
         assertEquals(ReplayDiagnostic.Phase.TARGET_RESOLUTION,missing.diagnostic().phase());
         var other = artifact(); ((ObjectNode)other.get("target")).put("targetId","only-in-b");
-        failure(engine.run(a,other.toString(),parameters()),UNKNOWN_TENANT_TARGET);
+        failure(engine.runValidation(a,other.toString(),parameters()),UNKNOWN_TENANT_TARGET);
         var injected = artifact(); ((ObjectNode)injected.get("target")).put("origin",origin(portB));
-        failure(engine.run(a,injected.toString(),parameters()),INVALID_ARTIFACT);
+        failure(engine.runValidation(a,injected.toString(),parameters()),INVALID_ARTIFACT);
         injected = artifact(); ((ObjectNode)injected.get("target")).put("entryPath",origin(portB)+"/legacy");
-        failure(engine.run(a,injected.toString(),parameters()),INVALID_ARTIFACT);
+        failure(engine.runValidation(a,injected.toString(),parameters()),INVALID_ARTIFACT);
         for (String key : List.of("tenantId","policy","sessionExpiryMarker","redactionPolicy")) {
             injected = artifact(); injected.put(key,"PRIVATE_TOKEN");
-            failure(engine.run(a,injected.toString(),parameters()),INVALID_ARTIFACT);
+            failure(engine.runValidation(a,injected.toString(),parameters()),INVALID_ARTIFACT);
         }
-        failure(engine.run(fixture(),parameters()),INVALID_PARAMETERS); // No implicit tenant on a native engine.
+        failure(engine.runValidation(fixture(),parameters()),INVALID_PARAMETERS); // No implicit tenant on a native engine.
         assertEquals(0,launches.get()); assertEquals(0,count(portA)); assertEquals(0,count(portB));
         try (var files = Files.list(directory)) {
             for (Path file : files.toList()) {
@@ -195,15 +195,15 @@ class TenantReplayIntegrationTest {
         var redaction = new DiagnosticRedactionPolicy(List.of("Open"),List.of("step-[0-9]{1,2}","Sav[a-z]{4}"));
         Path directory = temporary.resolve("diagnostics");
         var engine = new ReplayEngine(registry(redaction),options,new DiagnosticStore(directory),null);
-        exact(engine.run(a,fixture(),parameters()));
-        exact(engine.run(b,fixture(),parameters()));
+        exact(engine.runValidation(a,fixture(),parameters()));
+        exact(engine.runValidation(b,fixture(),parameters()));
         assertFalse(Files.exists(directory));
         String disabled = "<h1>Member Details</h1><table><tr><td>Savings</td><td>"
                 + "<a aria-disabled='true' href='/legacy/accounts/SAV-2048'>Open</a></td></tr></table>";
         pages.put(portA,Map.of("/legacy/members/100042",disabled));
         pages.put(portB,Map.of("/legacy/members/100042",disabled));
-        var privateResult = engine.run(a,fixture(),parameters());
-        var normalResult = engine.run(b,fixture(),parameters());
+        var privateResult = engine.runValidation(a,fixture(),parameters());
+        var normalResult = engine.runValidation(b,fixture(),parameters());
         failure(privateResult,POSTCONDITION_FAILED); failure(normalResult,POSTCONDITION_FAILED);
         assertEquals(4,privateResult.step()); assertEquals(4,normalResult.step());
         assertEquals("[REDACTED]",privateResult.diagnostic().stepId());
@@ -232,7 +232,7 @@ class TenantReplayIntegrationTest {
                 new DiagnosticStore(directory), null);
         var json = artifact();
         ((ObjectNode)json.at("/outcomes/0")).put("code", "LABTENANTA_ERROR");
-        var result = engine.run(a, json.toString(), parameters());
+        var result = engine.runValidation(a, json.toString(), parameters());
         failure(result, INVALID_ARTIFACT);
         assertEquals(0, launches.get());
         assertEquals(ReplayResult.DiagnosticPersistence.STORED, result.diagnosticPersistence());
@@ -251,11 +251,11 @@ class TenantReplayIntegrationTest {
         ((ObjectNode)json.at("/steps/0")).put("id","step_"+a.value());
         ((ObjectNode)json.at("/steps/0/locator")).put("accessibleName",b.value());
         ((ObjectNode)json.at("/steps/0/postcondition/locator")).put("accessibleName",b.value());
-        var result = engine.run(a,json.toString(),parameters());
+        var result = engine.runValidation(a,json.toString(),parameters());
         failure(result,ZERO_LOCATOR);
         assertEquals("[REDACTED]",result.diagnostic().stepId());
         assertEquals("[REDACTED]",result.diagnostic().expected().name());
         json = artifact(); ((ObjectNode)json.at("/outcomes/0")).put("code",a.value());
-        failure(engine.run(a,json.toString(),parameters()),INVALID_ARTIFACT);
+        failure(engine.runValidation(a,json.toString(),parameters()),INVALID_ARTIFACT);
     }
 }

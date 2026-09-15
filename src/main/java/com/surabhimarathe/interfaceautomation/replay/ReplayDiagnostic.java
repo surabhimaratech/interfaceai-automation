@@ -5,7 +5,7 @@ import com.surabhimarathe.interfaceautomation.artifact.*;
 /** Sanitized metadata only. Expectations are artifact declarations, never observed/resolved text. */
 public record ReplayDiagnostic(ReplayResult.Code code, int step, String stepId, Phase phase, ExpectedLocator expected,
                                MatchCounts matches, Conditions conditions) {
-    public enum Phase { VALIDATION, PARAMETERS, TARGET_RESOLUTION, LAUNCH, LOAD, OUTCOME,
+    public enum Phase { GOVERNANCE, VALIDATION, PARAMETERS, TARGET_RESOLUTION, LAUNCH, LOAD, OUTCOME,
         LOCATOR, ACTION, POSTCONDITION, CHECKPOINT, EXTRACTION, CLEANUP, SESSION_CHECK, HANDOFF, RESUMING }
     public record ExpectedLocator(LocatorSpec.Role role, String name, LocatorSpec.NameMatch nameMatch,
                                   ContextSpec context, LocatorSpec.Cardinality cardinality) {}

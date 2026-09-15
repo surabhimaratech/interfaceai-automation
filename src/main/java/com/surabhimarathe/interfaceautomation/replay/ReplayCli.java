@@ -1,6 +1,8 @@
 package com.surabhimarathe.interfaceautomation.replay;
 
 import com.surabhimarathe.interfaceautomation.discovery.DiscoveryPolicyConfiguration;
+import com.surabhimarathe.interfaceautomation.approval.*;
+import java.time.Clock;
 import org.springframework.core.env.PropertiesPropertySource;
 import org.springframework.core.env.StandardEnvironment;
 import java.math.BigDecimal;
@@ -15,15 +17,24 @@ public final class ReplayCli {
     private ReplayCli() {}
     public static void main(String[] args) {
         ReplayResult result;
-        String json;
+        byte[] json;
         try {
             if (args.length != 1 || Files.size(Path.of(args[0])) > 128_000) throw new IllegalArgumentException();
-            json = Files.readString(Path.of(args[0]));
+            json = Files.readAllBytes(Path.of(args[0]));
         } catch (Exception ex) {
             System.out.println(ReplayResult.failure(ReplayResult.Code.INVALID_ARTIFACT, 0));
             return;
         }
         try {
+            ReplayMode mode = ReplayMode.valueOf(System.getenv("REPLAY_MODE"));
+            ReplayGovernance governance = null;
+            String governanceDirectory = System.getenv("REPLAY_GOVERNANCE_DIRECTORY");
+            if (governanceDirectory != null && !governanceDirectory.isBlank()) {
+                try {
+                    governance = new ReplayGovernance(new ApprovalService(new FileGovernanceStore(Path.of(governanceDirectory)),
+                            ApprovalPolicy.defaults(),Clock.systemUTC()));
+                } catch (RuntimeException ex) { throw new ApprovalException(ApprovalException.Code.STORAGE_FAILURE); }
+            }
             Properties properties = new Properties();
             try (var stream = ReplayCli.class.getResourceAsStream("/application.properties")) { properties.load(stream); }
             var env = new StandardEnvironment();
@@ -53,9 +64,10 @@ public final class ReplayCli {
                             Integer.parseInt(System.getenv().getOrDefault("REPLAY_HANDOFF_LIMIT","2")));
                      var operator = new ReplayOperatorServer(handoff,Integer.parseInt(
                             System.getenv().getOrDefault("REPLAY_OPERATOR_PORT","18082")))) {
-                    result = new ReplayEngine(targets, options, store, handoff).run(json,invocation);
+                    result = new ReplayEngine(targets, options, store, handoff,governance).run(json,invocation,mode);
                 }
-            } else result = new ReplayEngine(targets, options, store).run(json, invocation);
+            } else result = new ReplayEngine(targets, options, store,null,governance).run(json, invocation,mode);
+        } catch (ApprovalException ex) { result = ReplayResult.failure(ReplayResult.Code.GOVERNANCE_FAILURE,0);
         } catch (Exception ex) { result = ReplayResult.failure(ReplayResult.Code.INVALID_PARAMETERS, 0); }
         System.out.println(result); // Only fixed metadata and the validated artifact outcome identifier; no values.
     }

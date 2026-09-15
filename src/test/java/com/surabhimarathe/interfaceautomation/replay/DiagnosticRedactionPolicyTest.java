@@ -78,7 +78,7 @@ class DiagnosticRedactionPolicyTest {
                 var registry = new TenantTargetRegistry(Map.of(new TenantId("labTenantA"),Map.of("legacy-banking",configuration)));
                 new ReplayEngine(registry,ReplayOptions.defaults(),
                         (p,o) -> { launches.incrementAndGet(); throw new IllegalStateException("PRIVATE"); },null,null)
-                        .run(new TenantId("labTenantA"),"{}",new InvocationParameters(Map.of()));
+                        .runValidation(new TenantId("labTenantA"),"{}",new InvocationParameters(Map.of()));
             });
             assertEquals("INVALID_REDACTION_CONFIGURATION",error.getMessage());
         }

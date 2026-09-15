@@ -324,11 +324,12 @@ git diff --check
 
 ## Day 2 gate 2: deterministic artifact replay
 
-`ReplayEngine.run(artifactJson, InvocationParameters)` validates the artifact,
+`ReplayEngine.run(tenant, artifactBytes, InvocationParameters, ReplayMode)` validates the artifact,
 requires exactly the declared invocation keys, and accepts only Java `String`
 and `BigDecimal` values satisfying their contracts. It resolves `targetId` via a
-trusted tenant/target configuration (see Day 3 gate 3). The two-argument API
-requires an explicit single-tenant `TargetRegistry` adapter. Invalid artifacts/parameters,
+trusted tenant/target configuration (see Day 3 gate 3). The explicitly named
+`runValidation` compatibility API requires a single-tenant `TargetRegistry`
+adapter unless a tenant is supplied. Mode-less `run` calls now fail closed. Invalid artifacts/parameters,
 unknown targets and denied entry paths return before browser launch. Concrete
 origins never come from the artifact.
 
@@ -405,6 +406,7 @@ In a second terminal, invoke the hand-authored fixture without an API key:
 ```sh
 cd interfaceai-automation
 env -u OPENROUTER_API_KEY \
+REPLAY_MODE=VALIDATION \
 REPLAY_TENANT_ID=synthetic-local \
 REPLAY_ORIGIN=http://localhost:8080 \
 REPLAY_MEMBER_ID=100042 \
@@ -417,7 +419,8 @@ This opens headed Chromium, stops at verified review, closes the session and pri
 a redacted result. The CLI is a fee-review invocation adapter; Java callers can
 supply other typed contracts and trusted target registries. `replay.target-id`
 and the existing `discovery.allowed-*` properties configure the trusted target.
-`REPLAY_TENANT_ID` is required: the CLI explicitly binds a single tenant, with no
+`REPLAY_MODE` and `REPLAY_TENANT_ID` are required: the CLI explicitly binds a mode
+and single tenant, with no
 default. `REPLAY_ORIGIN` is a host-side override, not artifact data. Optional environment
 settings are `REPLAY_HEADLESS=true`, `REPLAY_STEP_TIMEOUT_MS`, and
 `REPLAY_TIMEOUT_MS`. Do not source an API-key file for replay.
@@ -620,7 +623,7 @@ member ID override applies only to this command, leaving the caller's value unch
 
 ```sh
 export REPLAY_DIAGNOSTIC_DIRECTORY="$(mktemp -d)"
-env -u OPENROUTER_API_KEY REPLAY_TENANT_ID=synthetic-local REPLAY_MEMBER_ID=999999 ./gradlew replay --args='src/test/resources/artifacts/prepare-fee-reversal-review.v1.json'
+env -u OPENROUTER_API_KEY REPLAY_MODE=VALIDATION REPLAY_TENANT_ID=synthetic-local REPLAY_MEMBER_ID=999999 ./gradlew replay --args='src/test/resources/artifacts/prepare-fee-reversal-review.v1.json'
 unset REPLAY_DIAGNOSTIC_DIRECTORY
 ```
 
@@ -787,8 +790,8 @@ var registry = new TenantTargetRegistry(Map.of(
     tenantB, Map.of("legacy-banking", new TenantTargetConfiguration(
         policyB, null, DiagnosticRedactionPolicy.baseline()))));
 var engine = new ReplayEngine(registry, options);
-var resultA = engine.run(tenantA, artifactJson, parameters);
-var resultB = engine.run(tenantB, artifactJson, parameters);
+var resultA = engine.run(tenantA, artifactJson, parameters, ReplayMode.VALIDATION);
+var resultB = engine.run(tenantB, artifactJson, parameters, ReplayMode.VALIDATION);
 ```
 
 Markers can differ per tenant/target. The same artifact and typed parameters
@@ -801,8 +804,8 @@ with a fixed error.
 
 The CLI and older tests use the explicit compatibility adapter
 `TargetRegistry.singleTenant(new TenantId("synthetic-local"), policies, markers)`
-(the marker map is optional). Its two-argument replay API retains the legacy
-`UNKNOWN_TARGET` code. Native tenant-aware calls use the distinct codes above.
+(the marker map is optional). Its explicitly named `runValidation` API retains
+the legacy `UNKNOWN_TARGET` code. Native tenant-aware calls use the distinct codes above.
 The CLI requires `REPLAY_TENANT_ID`; it does not infer identity from inputs or the
 artifact. Custom redaction is configured through the trusted Java registry, not
 artifact fields or model output.
@@ -856,8 +859,9 @@ live evidence or reversal submission is introduced.
 
 ## Optional stretch: confidence & approval — gate 1
 
-The isolated `approval` package defines governance metadata, **not replay
-enforcement**. Neither `ReplayEngine` nor the CLI consults approval state yet.
+Gate 1 originally defined governance metadata in isolation. Gate 2 below now
+enforces it at the unattended replay boundary; the domain remains independent of
+replay implementation types.
 There is no new live evidence, approval endpoint or operator UI. The host is
 responsible for supplying truthful observations and an identified human approver;
 the module does not authenticate either assertion.
@@ -960,6 +964,106 @@ Offline verification (temporary test journals only, no model calls):
 
 ```sh
 ./gradlew test --tests '*approval.*' --rerun-tasks
+./gradlew test --rerun-tasks
+git diff --check
+```
+
+## Optional stretch: governed replay — gate 2
+
+Replay now requires an explicit trusted execution mode:
+
+- `VALIDATION` permits qualification runs without approval. Governance is optional;
+  when attached, an already registered DRAFT or APPROVED identity receives exactly
+  one observation derived internally from the actual replay result. Unknown
+  identities are never auto-registered. Suspended identities remain terminal and
+  are blocked. Failures after identifying a registered validation artifact,
+  including invalid invocation/target-policy checks, also count as observations.
+- `UNATTENDED` requires attached governance and the exact identity to be APPROVED
+  and healthy under its stored `approvedUnder` criteria. Tenant, artifact, target,
+  invocation and entry policy checks precede approval preflight. No Playwright
+  instance or browser launcher is invoked on preflight rejection. Completed
+  unattended attempts also record one internally derived observation.
+
+The primary API is `run(tenant, byte[], parameters, mode)`. It copies the bytes,
+strictly decodes UTF-8, and uses the unchanged byte sequence with
+`ArtifactIdentity.from`. Formatting, encoding or content changes do not inherit
+approval. The CLI uses `Files.readAllBytes`; explicit-mode String overloads use
+strict UTF-8 encoding and the same governance check. Mode-less `run` overloads
+return `INVALID_PARAMETERS`, not an implicit validation or unattended execution.
+The explicitly named `runValidation` methods support older callers/tests without
+silently selecting unattended mode. No tenant, digest or version fallback exists.
+
+New result codes are `BLOCKED / APPROVAL_REQUIRED` for unknown/DRAFT identities,
+`BLOCKED / APPROVAL_SUSPENDED` for suspended or unhealthy approved identities
+(both disposition `POLICY_BLOCK`), and `FAILED / GOVERNANCE_FAILURE` for missing,
+unreadable, corrupt or inconsistent governance (`HARD_FAILURE`). Preflight
+diagnostics contain only fixed governance-phase metadata, not identity fields,
+artifact bytes, paths or exception details. Optional diagnostic persistence and
+the redacted CLI presentation cover these codes too.
+
+Result dispositions map to fixed observations: SUCCESS → SUCCESS,
+EXPECTED_OUTCOME → EXPECTED_OUTCOME, RECOVERABLE → RECOVERABLE_FAILURE,
+POLICY_BLOCK → POLICY_BLOCK, and HARD_FAILURE → HARD_FAILURE. The caller cannot
+supply a replay observation label. A successful ownership transfer increments a
+bounded in-memory `ReplayResult.handoffCount`, even when successful execution has
+no diagnostic. Any handoff overrides the mapping with HUMAN_ASSISTED only.
+Resume still uses fresh controls in the same session; neither handoff nor approval
+introduces an action retry.
+
+After observation, an APPROVED identity that has a safety failure or no longer
+meets its original criteria receives a SUSPEND event with SAFETY_REVIEW or
+RELIABILITY_REGRESSION. Today's policy is never substituted for `approvedUnder`.
+Preflight independently checks health, so even if suspension publication failed,
+the unhealthy approval cannot authorize the next unattended browser launch.
+Approval-preflight denials produce no reliability observation. Observation or
+suspension publication failure returns fixed GOVERNANCE_FAILURE and redacts
+outputs; it cannot undo actions already completed. Observation and suspension
+are separate append-only publications, not a rollback-capable transaction.
+
+Bootstrap using trusted local Java host code (no HTTP/admin interface is added):
+
+```java
+var store = new FileGovernanceStore(trustedJournalDirectory);
+var approvals = new ApprovalService(store, ApprovalPolicy.defaults(), clock);
+var identity = approvals.register(tenant, exactArtifactBytes).identity();
+var replay = new ReplayEngine(targets, options, diagnosticStore, null,
+        new ReplayGovernance(approvals));
+// Invoke validation for real qualification attempts; each records its own result.
+var result = replay.run(tenant, exactArtifactBytes, parameters, ReplayMode.VALIDATION);
+// After enough qualifying runs, a trusted human explicitly approves:
+// approvals.approve(identity, trustedHumanActor);
+// replay.run(tenant, exactArtifactBytes, parameters, ReplayMode.UNATTENDED);
+```
+
+The sequence is register → validation observations → explicit human approval →
+unattended replay. Registration and approval are host API operations, not CLI
+shortcuts. The CLI requires `REPLAY_MODE=VALIDATION` or `REPLAY_MODE=UNATTENDED`;
+`REPLAY_GOVERNANCE_DIRECTORY` attaches a trusted existing journal. For an approved
+identity, with the synthetic server started and invocation variables exported:
+
+```sh
+env -u OPENROUTER_API_KEY \
+REPLAY_MODE=UNATTENDED REPLAY_TENANT_ID=synthetic-local \
+REPLAY_GOVERNANCE_DIRECTORY="$TRUSTED_GOVERNANCE_DIRECTORY" \
+./gradlew replay --args='src/test/resources/artifacts/prepare-fee-reversal-review.v1.json'
+```
+
+`TRUSTED_GOVERNANCE_DIRECTORY` must be set by the host to its prepared journal;
+this command does not bootstrap approval. It is a command example, not new live
+evidence. Validation can omit the journal, but then gathers no governance history.
+
+Limitations: mode selection, registration, observations and approver identity are
+trusted-host responsibilities, not authentication. The journal is not a remote
+policy service or a tamper-proof audit log. In-process journal operations are
+serialized, but approval preflight is a point-in-time check, not a long-lived
+execution lease; later suspension does not cancel an already-running invocation.
+Concurrent invocations can finish after another invocation suspends the identity;
+rejected subsequent publication is surfaced as GOVERNANCE_FAILURE. Multi-process
+coordination, administration UI, retention, automatic retry and rollback remain
+out of scope. No live run or new evidence was created for this gate.
+
+```sh
+./gradlew test --tests '*GovernedReplayIntegrationTest' --tests '*ReplayHandoffIntegrationTest' --rerun-tasks
 ./gradlew test --rerun-tasks
 git diff --check
 ```

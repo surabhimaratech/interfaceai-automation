@@ -127,6 +127,10 @@ class ReplayHandoffIntegrationTest {
         var browserRef = new AtomicReference<Browser>();
         var contextRef = new AtomicReference<BrowserContext>();
         var pageRef = new AtomicReference<Page>();
+        var governanceEvents = new com.surabhimarathe.interfaceautomation.approval.InMemoryGovernanceStore();
+        var approvals = new com.surabhimarathe.interfaceautomation.approval.ApprovalService(governanceEvents,
+                com.surabhimarathe.interfaceautomation.approval.ApprovalPolicy.defaults(),java.time.Clock.systemUTC());
+        var governedIdentity = approvals.register(new TenantId("synthetic-local"),fixture().getBytes(StandardCharsets.UTF_8)).identity();
         try (var handoff = new ReplayHandoff(Duration.ofSeconds(12),2);
              var operator = new ReplayOperatorServer(handoff,0);
              var executor = Executors.newSingleThreadExecutor()) {
@@ -147,9 +151,9 @@ class ReplayHandoffIntegrationTest {
                     });
                 });
                 return browser;
-            },null,handoff);
+            },null,handoff,new ReplayGovernance(approvals));
             String json = fixture();
-            var pending = executor.submit(() -> engine.run(json,parameters()));
+            var pending = executor.submit(() -> engine.runValidation(json,parameters()));
             awaitHuman(handoff);
             assertEquals(1,handoff.status().step());
             assertThrows(IllegalStateException.class,handoff::requireAutomation);
@@ -178,6 +182,12 @@ class ReplayHandoffIntegrationTest {
                         "currentBalance",new java.math.BigDecimal("1842.73"),"amount",new java.math.BigDecimal("25.00"),
                         "reason","Courtesy adjustment","projectedBalance",new java.math.BigDecimal("1867.73")).equals(result.outputs()));
                 assertNull(result.diagnostic());
+                assertEquals(1,result.handoffCount());
+                assertEquals(1,approvals.state(governedIdentity).reliability().assisted());
+                assertEquals(0,approvals.state(governedIdentity).reliability().eligible());
+                assertEquals(2,governanceEvents.read().size());
+                assertEquals(com.surabhimarathe.interfaceautomation.approval.ReliabilityObservation.HUMAN_ASSISTED,
+                        governanceEvents.read().getLast().observation());
             }
             assertEquals(1,launches.get()); assertEquals(1,contexts.get()); assertEquals(1,pages.get());
             assertTrue(identity.get()); assertTrue(cookieSurvived.get());
@@ -187,7 +197,7 @@ class ReplayHandoffIntegrationTest {
 
     @Test void configuredMarkerWithoutCoordinatorReturnsHumanRequiredAndPersistsOnlyDiagnostic() throws Exception {
         Path directory = temporary.resolve("diagnostics");
-        var result = new ReplayEngine(registry(true),options(),new DiagnosticStore(directory)).run(fixture(),parameters());
+        var result = new ReplayEngine(registry(true),options(),new DiagnosticStore(directory)).runValidation(fixture(),parameters());
         assertFailure(result,HUMAN_ACTION_REQUIRED);
         assertEquals(ReplayResult.Disposition.RECOVERABLE,result.disposition());
         assertEquals(ReplayResult.DiagnosticPersistence.STORED,result.diagnosticPersistence());
@@ -205,13 +215,13 @@ class ReplayHandoffIntegrationTest {
 
     @Test void unconfiguredAndNonSemanticExpiryTextNeverTriggersHandoff() throws Exception {
         try (var handoff = new ReplayHandoff(Duration.ofSeconds(1),1)) {
-            var result = new ReplayEngine(registry(false),options(),null,handoff).run(fixture(),parameters());
+            var result = new ReplayEngine(registry(false),options(),null,handoff).runValidation(fixture(),parameters());
             assertEquals(CHECKPOINT_VERIFIED,result.code(),result.toString());
             assertEquals(0,handoff.status().epoch());
         }
         entry = FORM + "<p>SESSION_EXPIRED PRIVATE_PAGE</p></main>";
         try (var handoff = new ReplayHandoff(Duration.ofSeconds(1),1)) {
-            assertEquals(CHECKPOINT_VERIFIED,new ReplayEngine(registry(true),options(),null,handoff).run(fixture(),parameters()).code());
+            assertEquals(CHECKPOINT_VERIFIED,new ReplayEngine(registry(true),options(),null,handoff).runValidation(fixture(),parameters()).code());
             assertEquals(0,handoff.status().epoch());
         }
     }
@@ -221,7 +231,7 @@ class ReplayHandoffIntegrationTest {
              var operator = new ReplayOperatorServer(handoff,0);
              var executor = Executors.newSingleThreadExecutor()) {
             String json = fixture();
-            var pending = executor.submit(() -> new ReplayEngine(registry(true),options(),null,handoff).run(json,parameters()));
+            var pending = executor.submit(() -> new ReplayEngine(registry(true),options(),null,handoff).runValidation(json,parameters()));
             awaitHuman(handoff);
             String signal = cookie(operator);
             var result = pending.get(10,TimeUnit.SECONDS);
@@ -239,7 +249,7 @@ class ReplayHandoffIntegrationTest {
              var operator = new ReplayOperatorServer(handoff,0);
              var executor = Executors.newSingleThreadExecutor()) {
             String json = fixture();
-            var pending = executor.submit(() -> new ReplayEngine(registry(true),options(),null,handoff).run(json,parameters()));
+            var pending = executor.submit(() -> new ReplayEngine(registry(true),options(),null,handoff).runValidation(json,parameters()));
             awaitHuman(handoff);
             assertEquals(303,resume(operator,cookie(operator))); // No repair: marker still present.
             var result = pending.get(10,TimeUnit.SECONDS);
@@ -257,7 +267,7 @@ class ReplayHandoffIntegrationTest {
                 "const x=new XMLHttpRequest();x.open('POST','/legacy/accounts/SAV-2048/fee-reversal/submit',false);try{x.send()}catch(e){}")) {
             entry = FORM + MARKER + "<script>"+script+"</script></main>";
             try (var handoff = new ReplayHandoff(Duration.ofSeconds(1),1)) {
-                var result = new ReplayEngine(registry(true),options(),null,handoff).run(fixture(),parameters());
+                var result = new ReplayEngine(registry(true),options(),null,handoff).runValidation(fixture(),parameters());
                 assertTrue(Set.of(UNEXPECTED_DIALOG,BROWSER_FAILURE,POLICY_DENIED).contains(result.code()),result.toString());
                 assertEquals(0,handoff.status().epoch());
                 assertEquals(0,result.diagnostic().conditions().handoffCount());
@@ -272,7 +282,7 @@ class ReplayHandoffIntegrationTest {
         var step = artifact.at("/steps/1").deepCopy();
         artifact.putArray("steps").add(step);
         try (var handoff = new ReplayHandoff(Duration.ofSeconds(1),1)) {
-            var result = new ReplayEngine(registry(true),options(),null,handoff).run(artifact.toString(),parameters());
+            var result = new ReplayEngine(registry(true),options(),null,handoff).runValidation(artifact.toString(),parameters());
             assertFailure(result,POLICY_DENIED);
             assertEquals(0,handoff.status().epoch());
             assertFalse(result.diagnostic().conditions().actionStarted());
@@ -284,7 +294,7 @@ class ReplayHandoffIntegrationTest {
         reviewDelay = 1800;
         try (var handoff = new ReplayHandoff(Duration.ofSeconds(2),1)) {
             var bounded = new ReplayOptions(Duration.ofMillis(700),Duration.ofSeconds(20),false);
-            var result = new ReplayEngine(registry(true),bounded,null,handoff).run(fixture(),parameters());
+            var result = new ReplayEngine(registry(true),bounded,null,handoff).runValidation(fixture(),parameters());
             assertFailure(result,TIMEOUT);
             assertTrue(result.diagnostic().conditions().actionStarted());
             assertEquals(8,result.step());
@@ -296,7 +306,7 @@ class ReplayHandoffIntegrationTest {
     @Test void overallDeadlineWhileHumanOwnsSessionReturnsHandoffTimeout() throws Exception {
         try (var handoff = new ReplayHandoff(Duration.ofSeconds(10),1)) {
             var bounded = new ReplayOptions(Duration.ofSeconds(2),Duration.ofSeconds(4),false);
-            var result = new ReplayEngine(registry(true),bounded,null,handoff).run(fixture(),parameters());
+            var result = new ReplayEngine(registry(true),bounded,null,handoff).runValidation(fixture(),parameters());
             assertFailure(result,HANDOFF_TIMEOUT);
             assertTrue(result.diagnostic().conditions().handoffTimedOut());
             assertFalse(result.diagnostic().conditions().actionStarted());
@@ -312,7 +322,7 @@ class ReplayHandoffIntegrationTest {
             var engine = new ReplayEngine(registry(true),options(),
                     (p,o) -> p.chromium().launch(o.setArgs(List.of("--remote-debugging-port="+cdp))),null,handoff);
             String artifact = fixture();
-            var pending = executor.submit(() -> engine.run(artifact,parameters()));
+            var pending = executor.submit(() -> engine.runValidation(artifact,parameters()));
             awaitHuman(handoff);
             String signal = cookie(operator);
             try (var playwright = Playwright.create()) {
@@ -339,7 +349,7 @@ class ReplayHandoffIntegrationTest {
     @Test void duplicateSemanticMarkersFailClosedRatherThanHandingOff() throws Exception {
         entry = FORM + MARKER + MARKER + "</main>";
         try (var handoff = new ReplayHandoff(Duration.ofSeconds(1),1)) {
-            var result = new ReplayEngine(registry(true),options(),null,handoff).run(fixture(),parameters());
+            var result = new ReplayEngine(registry(true),options(),null,handoff).runValidation(fixture(),parameters());
             assertFailure(result,AMBIGUOUS_LOCATOR);
             assertEquals(0,handoff.status().epoch());
         }

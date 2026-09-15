@@ -94,7 +94,7 @@ class ReplayOperatorTest {
             var engine = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of()),
                     new ReplayOptions(Duration.ofSeconds(1),Duration.ofSeconds(3),true),
                     (p,o) -> { launches.incrementAndGet(); throw new IllegalStateException("PRIVATE"); },null,handoff);
-            var result = engine.run("{}",new InvocationParameters(Map.of()));
+            var result = engine.runValidation("{}",new InvocationParameters(Map.of()));
             assertEquals(ReplayResult.Code.INVALID_PARAMETERS,result.code());
             assertEquals(0,launches.get());
         }

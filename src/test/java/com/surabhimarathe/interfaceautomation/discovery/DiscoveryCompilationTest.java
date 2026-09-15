@@ -94,7 +94,7 @@ class DiscoveryCompilationTest {
         assertFalse(Files.exists(f.output()));
         var replay = new ReplayEngine(TargetRegistry.singleTenant(new TenantId("synthetic-local"), Map.of("legacy-banking",ScriptedCompilationScenario.policy(origin()))),
                 new ReplayOptions(Duration.ofSeconds(5),Duration.ofSeconds(25),true))
-                .run(json,new InvocationParameters(FeeReviewCapability.parameters(request())));
+                .runValidation(json,new InvocationParameters(FeeReviewCapability.parameters(request())));
         assertEquals(ReplayResult.Status.SUCCEEDED,replay.status(),replay.toString());
         assertTrue(Map.of("memberId","100042","memberName","Morgan Lee","accountId","SAV-2048",
                 "currentBalance",new BigDecimal("1842.73"),"amount",new BigDecimal("25.00"),

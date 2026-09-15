@@ -11,7 +11,7 @@ class ReplayResultTest {
         return switch (code) {
             case CHECKPOINT_VERIFIED -> Status.SUCCEEDED;
             case BUSINESS_OUTCOME -> Status.EXPECTED_OUTCOME;
-            case POLICY_DENIED -> Status.BLOCKED;
+            case POLICY_DENIED, APPROVAL_REQUIRED, APPROVAL_SUSPENDED -> Status.BLOCKED;
             default -> Status.FAILED;
         };
     }
@@ -19,7 +19,7 @@ class ReplayResultTest {
         return switch (code) {
             case CHECKPOINT_VERIFIED -> Disposition.SUCCESS;
             case BUSINESS_OUTCOME -> Disposition.EXPECTED_OUTCOME;
-            case POLICY_DENIED -> Disposition.POLICY_BLOCK;
+            case POLICY_DENIED, APPROVAL_REQUIRED, APPROVAL_SUSPENDED -> Disposition.POLICY_BLOCK;
             case TIMEOUT, HUMAN_ACTION_REQUIRED -> Disposition.RECOVERABLE;
             default -> Disposition.HARD_FAILURE;
         };

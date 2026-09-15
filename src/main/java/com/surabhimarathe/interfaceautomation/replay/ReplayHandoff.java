@@ -4,10 +4,13 @@ import com.surabhimarathe.interfaceautomation.discovery.HandoffCoordinator;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** One invocation. Operator threads signal resume; only the browser thread reclaims ownership. */
 public final class ReplayHandoff implements AutoCloseable {
     private final HandoffCoordinator ownership = new HandoffCoordinator();
+    private final AtomicInteger transfers = new AtomicInteger();
+    int transferCount() { return transfers.get(); }
     private final AtomicBoolean claimed = new AtomicBoolean();
     private final Duration timeout;
     private final int limit;
@@ -26,7 +29,7 @@ public final class ReplayHandoff implements AutoCloseable {
         if (status().owner() != HandoffCoordinator.Owner.RESUMING) throw new IllegalStateException("INVALID_OWNERSHIP");
     }
     void request(int step) {
-        try { ownership.request(HandoffCoordinator.Reason.SESSION_EXPIRY,step); }
+        try { ownership.request(HandoffCoordinator.Reason.SESSION_EXPIRY,step); transfers.incrementAndGet(); }
         catch (IOException ex) { throw new IllegalStateException("HANDOFF_FAILED"); }
     }
     // Transport only: never rendered, serialized, logged, or exposed to the target page.
