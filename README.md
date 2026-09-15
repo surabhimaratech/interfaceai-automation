@@ -1036,8 +1036,9 @@ var result = replay.run(tenant, exactArtifactBytes, parameters, ReplayMode.VALID
 ```
 
 The sequence is register → validation observations → explicit human approval →
-unattended replay. Registration and approval are host API operations, not CLI
-shortcuts. The CLI requires `REPLAY_MODE=VALIDATION` or `REPLAY_MODE=UNATTENDED`;
+unattended replay. The governance-only `approvalCli` task also exposes registration,
+status, explicit approval and suspension (see below). The replay CLI requires
+`REPLAY_MODE=VALIDATION` or `REPLAY_MODE=UNATTENDED`;
 `REPLAY_GOVERNANCE_DIRECTORY` attaches a trusted existing journal. For an approved
 identity, with the synthetic server started and invocation variables exported:
 
@@ -1061,6 +1062,59 @@ Concurrent invocations can finish after another invocation suspends the identity
 rejected subsequent publication is surfaced as GOVERNANCE_FAILURE. Multi-process
 coordination, administration UI, retention, automatic retry and rollback remain
 out of scope. No live run or new evidence was created for this gate.
+
+### Stretch Gate 3A: human-operated approval CLI
+
+`approvalCli` accepts only `register <artifact-path>`, `status <artifact-path>`,
+`approve <artifact-path>`, and `suspend <artifact-path> <reason>`. Every command
+reads exact bytes (the same 128,000-byte file limit as the replay CLI) and selects
+the exact tenant/digest identity. Required trusted environment variables are
+`REPLAY_GOVERNANCE_DIRECTORY` and `REPLAY_TENANT_ID`; `APPROVAL_ACTOR` is required
+only for approval. Command, configuration, actor and artifact validation precede
+journal creation. Duplicate registration fails with `INVALID_TRANSITION`.
+
+Status prints only lifecycle, reliability counts, Wilson score in basis points,
+current DRAFT eligibility, historical approval criteria and fixed suspension
+reason. Failures print fixed codes, never paths, identities, digests or exception
+details. There is no observation, counter-editing, policy-editing, reset, delete,
+or reapproval command. Qualification observations come from governed replay,
+not from operator assertions. The CLI uses the default 5-run/5000-basis-point
+policy with mandatory zero safety failures.
+
+Example bootstrap, from the repository root with the synthetic target already
+running as described above (these are commands, not new evidence):
+
+```sh
+export REPLAY_GOVERNANCE_DIRECTORY="$(mktemp -d)"
+export REPLAY_TENANT_ID=synthetic-local
+export REPLAY_MEMBER_ID=100042 REPLAY_AMOUNT=25.00
+export REPLAY_REASON='Courtesy adjustment'
+APPROVAL_ARTIFACT=artifacts/capability-dc55aa1d-d34c-4735-bc46-b36bbc64f4b0.json
+./gradlew approvalCli --args="register $APPROVAL_ARTIFACT"
+# Each attempt executes the real review-only UI and derives its own observation.
+for attempt in 1 2 3 4 5; do
+  env -u OPENROUTER_API_KEY REPLAY_MODE=VALIDATION \
+    ./gradlew replay --args="$APPROVAL_ARTIFACT"
+done
+./gradlew approvalCli --args="status $APPROVAL_ARTIFACT"
+# A human reviews eligibility and explicitly authorizes this transition.
+APPROVAL_ACTOR=synthetic-operator ./gradlew approvalCli --args="approve $APPROVAL_ARTIFACT"
+env -u OPENROUTER_API_KEY REPLAY_MODE=UNATTENDED \
+  ./gradlew replay --args="$APPROVAL_ARTIFACT"
+# Optional explicit withdrawal:
+./gradlew approvalCli --args="suspend $APPROVAL_ARTIFACT OPERATOR_WITHDRAWAL"
+```
+
+Other allowed suspension reasons are `SAFETY_REVIEW`, `RELIABILITY_REGRESSION`,
+and `TARGET_CHANGED`. Failed qualification attempts may require more validation
+runs; approval never bypasses eligibility. Commands trust host environment and
+filesystem permissions and provide **no authentication**. Separate processes must
+not administer/replay against one journal concurrently: cross-process locking
+remains out of scope. No lifecycle demonstration was performed for this gate.
+
+```sh
+./gradlew test --tests '*ApprovalCliTest' --rerun-tasks
+```
 
 ```sh
 ./gradlew test --tests '*GovernedReplayIntegrationTest' --tests '*ReplayHandoffIntegrationTest' --rerun-tasks

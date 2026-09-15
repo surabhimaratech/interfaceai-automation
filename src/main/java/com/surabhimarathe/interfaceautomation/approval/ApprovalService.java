@@ -36,9 +36,7 @@ public final class ApprovalService {
         });
     }
     public ApprovalState approve(ArtifactIdentity id, String trustedHumanActor) {
-        if (trustedHumanActor == null || trustedHumanActor.isBlank() || trustedHumanActor.length() > 160
-                || trustedHumanActor.codePoints().anyMatch(c -> Character.isISOControl(c) || (c >= 0xD800 && c <= 0xDFFF)))
-            throw fail(Code.INVALID_ACTOR);
+        validateActor(trustedHumanActor);
         String actorHash = Hashes.scoped("interfaceai:approval:actor:v1",trustedHumanActor);
         return mutate(id,history -> {
             var state = require(history,id);
@@ -46,6 +44,11 @@ public final class ApprovalService {
             if (!policy.eligible(state.reliability())) throw fail(Code.NOT_ELIGIBLE);
             return event(id,GovernanceEvent.Type.APPROVE,null,null,actorHash,history.size()+1L);
         });
+    }
+    static void validateActor(String trustedHumanActor) {
+        if (trustedHumanActor == null || trustedHumanActor.isBlank() || trustedHumanActor.length() > 160
+                || trustedHumanActor.codePoints().anyMatch(c -> Character.isISOControl(c) || (c >= 0xD800 && c <= 0xDFFF)))
+            throw fail(Code.INVALID_ACTOR);
     }
     public ApprovalState suspend(ArtifactIdentity id, SuspensionReason reason) {
         if (reason == null) throw fail(Code.INVALID_EVENT);
