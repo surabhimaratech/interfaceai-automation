@@ -1061,7 +1061,9 @@ execution lease; later suspension does not cancel an already-running invocation.
 Concurrent invocations can finish after another invocation suspends the identity;
 rejected subsequent publication is surfaced as GOVERNANCE_FAILURE. Multi-process
 coordination, administration UI, retention, automatic retry and rollback remain
-out of scope. No live run or new evidence was created for this gate.
+out of scope. Historically, Gate 2 added no live evidence; the later
+[Gate 3B lifecycle demonstration](evidence/approval-lifecycle-f902431f-2c1c-499e-9c12-793eb1078588.md)
+verified qualification, human approval, exact-byte enforcement and suspension.
 
 ### Stretch Gate 3A: human-operated approval CLI
 
@@ -1110,7 +1112,12 @@ and `TARGET_CHANGED`. Failed qualification attempts may require more validation
 runs; approval never bypasses eligibility. Commands trust host environment and
 filesystem permissions and provide **no authentication**. Separate processes must
 not administer/replay against one journal concurrently: cross-process locking
-remains out of scope. No lifecycle demonstration was performed for this gate.
+remains out of scope. The later authentic
+[Gate 3B lifecycle demonstration](evidence/approval-lifecycle-f902431f-2c1c-499e-9c12-793eb1078588.md)
+qualified five validation runs, recorded author-operated approval, completed one
+approved unattended run, rejected changed bytes, and blocked replay after explicit
+author-operated withdrawal. Its curated evidence explains the initial verifier
+error, unchanged nine-event final history, redaction and attestation limitations.
 
 ```sh
 ./gradlew test --tests '*ApprovalCliTest' --rerun-tasks

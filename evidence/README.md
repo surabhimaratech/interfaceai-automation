@@ -139,3 +139,23 @@ secret can be detected. The redacted files do not independently attest to proces
 environment, absence of network calls or browser actions. UUID linkage and the
 artifact digest aid correlation; neither is cryptographic attestation of the run.
 Earlier evidence and the compiled artifact were not modified.
+
+## Stretch Gate 3B: authentic local approval lifecycle
+
+[Lifecycle evidence](approval-lifecycle-f902431f-2c1c-499e-9c12-793eb1078588.md)
+records the 2026-09-15 Pacific demonstration (final verification on 2026-09-16 UTC)
+using the same authentic compiled artifact documented above. Five validation
+successes established DRAFT eligibility; the project author explicitly approved
+it, one exact-artifact unattended replay succeeded, and changed bytes were blocked
+as APPROVAL_REQUIRED. The author explicitly withdrew approval; subsequent exact
+replay was blocked as APPROVAL_SUSPENDED before browser execution. The final
+journal remained nine events with six SUCCESS observations and preserved criteria.
+
+This is a curated execution account, not a raw journal or provider transcript.
+It explicitly qualifies the first run's verifier error and journal corroboration,
+and distinguishes later blocked checks from successful runs. Tenant/actor values,
+journal identity hashes, invocation/output data and temporary paths are omitted.
+The journal was not copied. Hashes are pseudonyms, not encryption; UUID/digest
+correlation is not cryptographic attestation. No LLM call or reversal submission
+occurred. This demonstrates trusted-host governance, not authentication, a live
+browser handoff, tamper-proof storage, execution leases or multi-process locking.
